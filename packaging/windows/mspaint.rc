@@ -1,0 +1,26 @@
+#include <windows.h>
+1 ICON "mspaint.ico"
+1 24 "mspaint.manifest"
+1 VERSIONINFO
+FILEVERSION 1,0,9,0
+PRODUCTVERSION 1,0,9,0
+FILEOS 0x4L
+FILETYPE 0x1L
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "FileDescription", "SmPaint"
+      VALUE "ProductName", "SmPaint"
+      VALUE "FileVersion", "1.09"
+      VALUE "ProductVersion", "1.09"
+      VALUE "InternalName", "mspaint"
+      VALUE "OriginalFilename", "mspaint.exe"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END

@@ -1,0 +1,16 @@
+# macOS build: universal binary (Apple Silicon arm64 + Intel x86_64), macOS 11 Big Sur or later.
+# Needs Xcode or the Command Line Tools (xcode-select --install). No other dependencies.
+#   make -f Makefile.mac            -> build/mspaint   (the executable)
+#   sh packaging/macos/make_app.sh  -> dist/Paint.app and dist/mspaintV<version>-mac.dmg
+CC ?= clang
+MINVER ?= -mmacosx-version-min=11.0
+ARCHS ?= -arch arm64 -arch x86_64
+CFLAGS ?= -O2 -std=gnu99 -Wall -Wextra -Wno-unused-parameter -Wno-misleading-indentation
+SRC = src/ui_main.c src/tools.c src/canvas.c src/ui.c src/gfx.c src/imgio.c src/jpeg.c src/resdata.c src/font_data.c src/plat_cocoa.m
+
+build/mspaint: $(SRC) $(wildcard src/*.h)
+	@mkdir -p build
+	$(CC) $(CFLAGS) -fobjc-arc $(ARCHS) $(MINVER) -o $@ $(SRC) -framework Cocoa -framework CoreText -framework CoreGraphics -lm
+
+clean:
+	rm -rf build dist

@@ -1,0 +1,5 @@
+build/
+dist/
+*.o
+mspaint
+mspaint-test

@@ -1,0 +1,42 @@
+# Builds Paint for Windows (x86, x64, arm64) and macOS (universal) and uploads the results as artifacts.
+# Optional: only used if you choose to put this project on GitHub. Nothing here is needed to build locally (see BUILDING.md).
+name: build
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+jobs:
+  windows:
+    runs-on: ubuntu-latest
+    env: { GH_TOKEN: '${{ github.token }}' }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y nsis xz-utils
+      - name: Get llvm-mingw toolchain
+        run: |
+          gh release download --repo mstorsjo/llvm-mingw --pattern '*-ucrt-ubuntu-*-x86_64.tar.xz' --dir /tmp
+          mkdir -p /opt/llvm-mingw && tar -xf /tmp/llvm-mingw-*.tar.xz -C /opt/llvm-mingw --strip-components=1
+          echo /opt/llvm-mingw/bin >> "$GITHUB_PATH"
+      - name: Build all architectures + installers
+        run: |
+          VER=$(sed -n 's/^#define APP_VERSION "V\(.*\)"/\1/p' src/app.h)
+          mkdir -p dist
+          for A in x64 x86 arm64; do
+            make -f Makefile.win ARCH=$A
+            cp build/mspaint-$A.exe dist/SmPaintV$VER-win-$A.exe
+            makensis -V1 -DARCH=$A -DVERSION=$VER -DEXE=../../build/mspaint-$A.exe -DOUTFILE=../../dist/SmPaintV$VER-win-$A-setup.exe packaging/windows/installer.nsi
+          done
+          ls -la dist
+      - name: Portable zip (unzip + double-click)
+        run: sh packaging/windows/make_portable.sh
+      - uses: actions/upload-artifact@v4
+        with: { name: windows, path: 'dist/*.exe\ndist/*.zip' }
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build universal app + dmg
+        run: sh packaging/macos/make_app.sh
+      - uses: actions/upload-artifact@v4
+        with: { name: macos, path: 'dist/*.dmg\ndist/*.zip' }

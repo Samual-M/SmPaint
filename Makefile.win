@@ -1,0 +1,32 @@
+# Windows build (Windows 10 and later). Cross-compile from Linux/macOS or build natively with MSYS2 / llvm-mingw.
+#   make -f Makefile.win ARCH=x64     -> build/mspaint-x64.exe     (64-bit Intel/AMD)
+#   make -f Makefile.win ARCH=x86     -> build/mspaint-x86.exe     (32-bit Intel/AMD)
+#   make -f Makefile.win ARCH=arm64   -> build/mspaint-arm64.exe   (Windows on ARM)
+# Toolchain: llvm-mingw (https://github.com/mstorsjo/llvm-mingw) provides all three; MinGW-w64 gcc works for x86/x64.
+# Override CC / WINDRES if your tools have different names, e.g.  make -f Makefile.win CC=gcc WINDRES=windres
+ARCH ?= x64
+TRIPLE_x64 = x86_64-w64-mingw32
+TRIPLE_x86 = i686-w64-mingw32
+TRIPLE_arm64 = aarch64-w64-mingw32
+T = $(TRIPLE_$(ARCH))
+ifeq ($(origin CC),default)
+CC = $(T)-clang
+endif
+WINDRES ?= $(T)-windres
+CFLAGS ?= -O2 -std=gnu99 -Wall -Wextra -Wno-unused-parameter -Wno-misleading-indentation
+CFLAGS += -DPAINT_WIN_GUI -D__USE_MINGW_ANSI_STDIO=1 -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -DUNICODE -D_UNICODE
+LDFLAGS ?= -mwindows -static -s
+LIBS = -lgdi32 -luser32 -lshell32 -lole32 -lm
+SRC = src/ui_main.c src/tools.c src/canvas.c src/ui.c src/gfx.c src/imgio.c src/jpeg.c src/resdata.c src/font_data.c src/plat_win32.c
+OUT = build/mspaint-$(ARCH).exe
+
+$(OUT): $(SRC) $(wildcard src/*.h) build/res-$(ARCH).o
+	@mkdir -p build
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(SRC) build/res-$(ARCH).o $(LIBS)
+
+build/res-$(ARCH).o: packaging/windows/mspaint.rc packaging/windows/mspaint.ico packaging/windows/mspaint.manifest
+	@mkdir -p build
+	cd packaging/windows && $(WINDRES) -O coff -i mspaint.rc -o ../../$@
+
+clean:
+	rm -rf build
