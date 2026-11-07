@@ -407,6 +407,16 @@ static void ensure_menus(void)
                 strcpy(m->text, "Copy Image to Clipboard\tCtrl+Shift+C");
                 tops[t].n++; t = ntops; break;
             }
+    /* Image > "Crop to Selection" before Flip/Rotate */
+    for (int t = 0; t < ntops; t++)
+        for (int i = 0; i < tops[t].n && tops[t].n < 27; i++)
+            if (tops[t].it[i].id == CMD_FLIPROT) {
+                MItem *m = &tops[t].it[i];
+                memmove(m + 1, m, sizeof(MItem) * (size_t)(tops[t].n - i));
+                memset(m, 0, sizeof *m); m->type = m[1].type; m->id = CMD_CROP; m->sub = -1;
+                strcpy(m->text, "Crop to Selection\tCtrl+Shift+X");
+                tops[t].n++; t = ntops; break;
+            }
     menus_built = 1;
 }
 int menu_bar_titles(char out[][32], int *xs, int *ws)

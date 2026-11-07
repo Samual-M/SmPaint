@@ -10,7 +10,7 @@
 #include "imgio.h"
 #include "resdata.h"
 
-#define APP_VERSION "V1.17"
+#define APP_VERSION "V1.18"
 
 typedef struct { int x, y; } Pt;
 typedef struct { int x, y, w, h; } Rc;
@@ -18,6 +18,7 @@ static inline int rc_in(const Rc *r, int x, int y) { return x >= r->x && y >= r-
 
 enum { T_FREESEL, T_SELECT, T_ERASER, T_FILL, T_PICK, T_MAG, T_PENCIL, T_BRUSH, T_AIR, T_TEXT, T_LINE, T_CURVE,
        T_RECT, T_POLY, T_ELLIPSE, T_RRECT, T_COUNT };
+#define T_NONE T_COUNT          /* no tool: click text boxes / shapes to move and edit them */
 enum { SH_RECT, SH_ELLIPSE, SH_RRECT };
 
 /* command ids (taken from the original resources) */
@@ -30,7 +31,7 @@ enum {
     CMD_ZOOM_NORMAL = 37670, CMD_ZOOM_LARGE = 37671, CMD_ZOOM_CUSTOM = 37672, CMD_VIEWBITMAP = 37673,
     CMD_THUMB = 37676, CMD_GRID = 37677, CMD_TEXTBAR = 37678, CMD_FLIPROT = 37680, CMD_STRETCH = 37681,
     CMD_INVERT = 37682, CMD_ATTR = 37683, CMD_CLEARIMG = 37684, CMD_OPAQUE = 6868, CMD_EDITCOLORS = 6869,
-    CMD_ZOOMIN = 6811, CMD_ZOOMOUT = 6810, CMD_COPYIMG = 6870
+    CMD_ZOOMIN = 6811, CMD_ZOOMOUT = 6810, CMD_COPYIMG = 6870, CMD_CROP = 6871
 };
 
 /* ---- application state ---- */
@@ -52,6 +53,8 @@ typedef struct {
     char font[64]; int size, bold, italic, underline;
     int frozen, from_obj; px_t fg, bg; int trans; int tscale;   /* tscale: text size multiplier (permille) fixed when the box is made */   /* committed boxes keep their own colours; from_obj = re-opened for editing */
 } TextBox;
+typedef struct { int kind, n, fillstyle, lw, closed; Pt *p; px_t outline, fill; } Shape;   /* finished line/curve/rect/ellipse/polygon: stays editable */
+typedef struct { int n; Shape *o; } SList;
 typedef struct { int n; TextBox *o; } TList;      /* finished text boxes: stay editable until something else changes the picture */
 
 typedef struct {
@@ -66,6 +69,7 @@ typedef struct {
     int grid_w, grid_h, tile_grid;
     char path[1024]; int dirty, bw;
     Sel sel; TextBox tb; TList tl, tundo[3], tredo[3];
+    SList sl, sundo[3], sredo[3]; int ssel;   /* finished shapes; ssel = selected one (-1 none) */
     Img *shadow;   /* picture area hidden by shrinking the canvas; comes back if the canvas is enlarged again */
     char status_help[256];
     char recent[4][1024]; int nrecent;
@@ -200,6 +204,7 @@ void text_set_size(int pt);
 void text_toggle(int which);
 void text_select_all(void);
 void app_bake_text(void);
+void app_crop_to_selection(void);
 Img *app_flat_image(int *owned);
 int text_has_sel(void);
 int text_edit_cmd(int id);

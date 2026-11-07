@@ -27,6 +27,7 @@ static struct {
     Img *orig;              /* original selection pixels while resizing */
     int ox, oy, ow, oh;     /* original selection rect */
     int cancelled;
+    int moved;              /* shape object edit: undo already pushed */
 } D;
 /* multi-step tools */
 static struct { int phase; Pt p[4]; int btn; } CV;       /* curve */
@@ -35,12 +36,20 @@ static struct { int n; Pt p[512]; int btn; int active; } PG; /* polygon */
 const int SHAPE_W[6] = { 1, 2, 3, 4, 6, 8 };
 int shape_lw(void) { return SHAPE_W[A.o_shapew < 0 || A.o_shapew > 5 ? 0 : A.o_shapew]; }
 static int tb_hit(int ix, int iy);
+static int shape_handle_at(int si, int ix, int iy);
+static int shape_body_hit(const Shape *s, int ix, int iy);
 const char *tool_cursor_for(int ix, int iy, int *idx)
 {
     switch (A.tool) {
     case T_SELECT: case T_FREESEL:
         if (A.sel.active) { int h = sel_hit(ix, iy); if (h == 1) { *idx = 0; return "move"; } if (h >= 2) { static const int hc[8] = { 9, 12, 10, 11, 9, 12, 10, 11 }; *idx = hc[(h - 2) & 7]; return "size"; } }
         *idx = 14; return "cross";
+    case T_NONE: {
+        if (A.tb.active) { int h = tb_hit(ix, iy); if (h == 2) { *idx = 0; return "move"; } if (h >= 3) { static const int hc[8] = { 9, 12, 10, 11, 9, 12, 10, 11 }; *idx = hc[(h - 3) & 7]; return "size"; } if (h == 1) { *idx = 15; return "text"; } }
+        if (A.ssel >= 0 && A.ssel < A.sl.n && shape_handle_at(A.ssel, ix, iy) >= 0) { *idx = 14; return "cross"; }
+        for (int i = A.tl.n - 1; i >= 0; i--) { TextBox *o = &A.tl.o[i]; if (ix >= o->x - 2 && iy >= o->y - 2 && ix < o->x + o->w + 2 && iy < o->y + o->h + 2) { *idx = 0; return "move"; } }
+        for (int i = A.sl.n - 1; i >= 0; i--) if (shape_body_hit(&A.sl.o[i], ix, iy)) { *idx = 0; return "move"; }
+        *idx = -1; return "arrow"; }
     case T_ERASER: *idx = 3; return "eraser";
     case T_FILL: *idx = 6; return "fill";
     case T_PICK: *idx = 5; return "pick";
@@ -74,8 +83,20 @@ static TList tl_clone(const TList *l)
 }
 static void tl_free(TList *l) { for (int i = 0; i < l->n; i++) { free(l->o[i].text); free(l->o[i].st); } free(l->o); l->o = NULL; l->n = 0; }
 static void tl_add(TList *l, TextBox o) { l->o = (TextBox *)realloc(l->o, sizeof(TextBox) * (size_t)(l->n + 1)); l->o[l->n++] = o; }
+static Shape sh_dup(const Shape *s) { Shape d = *s; d.p = (Pt *)malloc(sizeof(Pt) * (size_t)(s->n ? s->n : 1)); memcpy(d.p, s->p, sizeof(Pt) * (size_t)s->n); return d; }
+static SList sl_clone(const SList *l)
+{
+    SList c; c.n = l->n; c.o = l->n ? (Shape *)malloc(sizeof(Shape) * (size_t)l->n) : NULL;
+    for (int i = 0; i < l->n; i++) c.o[i] = sh_dup(&l->o[i]);
+    return c;
+}
+static void sl_free(SList *l) { for (int i = 0; i < l->n; i++) free(l->o[i].p); free(l->o); l->o = NULL; l->n = 0; }
+static void sl_add(SList *l, Shape s) { l->o = (Shape *)realloc(l->o, sizeof(Shape) * (size_t)(l->n + 1)); l->o[l->n++] = s; }
 static void undo_forget_all(void)
 {
+    sl_free(&A.sl); A.ssel = -1;
+    for (int i = 0; i < A.nundo; i++) sl_free(&A.sundo[i]);
+    for (int i = 0; i < A.nredo; i++) sl_free(&A.sredo[i]);
     img_free(A.shadow); A.shadow = NULL;
     for (int i = 0; i < A.nundo; i++) { img_free(A.undo[i]); tl_free(&A.tundo[i]); }
     for (int i = 0; i < A.nredo; i++) { img_free(A.redo[i]); tl_free(&A.tredo[i]); }
@@ -83,13 +104,13 @@ static void undo_forget_all(void)
 }
 void undo_push(void)
 {
-    if (A.nundo == 3) { img_free(A.undo[0]); tl_free(&A.tundo[0]); A.undo[0] = A.undo[1]; A.undo[1] = A.undo[2]; A.tundo[0] = A.tundo[1]; A.tundo[1] = A.tundo[2]; A.nundo = 2; }
-    A.tundo[A.nundo] = tl_clone(&A.tl);
+    if (A.nundo == 3) { img_free(A.undo[0]); tl_free(&A.tundo[0]); sl_free(&A.sundo[0]); A.undo[0] = A.undo[1]; A.undo[1] = A.undo[2]; A.tundo[0] = A.tundo[1]; A.tundo[1] = A.tundo[2]; A.sundo[0] = A.sundo[1]; A.sundo[1] = A.sundo[2]; A.nundo = 2; }
+    A.tundo[A.nundo] = tl_clone(&A.tl); A.sundo[A.nundo] = sl_clone(&A.sl);
     A.undo[A.nundo++] = img_clone(A.img);
-    for (int i = 0; i < A.nredo; i++) { img_free(A.redo[i]); tl_free(&A.tredo[i]); }
+    for (int i = 0; i < A.nredo; i++) { img_free(A.redo[i]); tl_free(&A.tredo[i]); sl_free(&A.sredo[i]); }
     A.nredo = 0; A.dirty = 1;
 }
-static void undo_drop_last(void) { if (A.nundo) { --A.nundo; img_free(A.undo[A.nundo]); tl_free(&A.tundo[A.nundo]); } }
+static void undo_drop_last(void) { if (A.nundo) { --A.nundo; img_free(A.undo[A.nundo]); tl_free(&A.tundo[A.nundo]); sl_free(&A.sundo[A.nundo]); } }
 void sel_cancel(void)
 {
     img_free(A.sel.pix); free(A.sel.mask); free(A.sel.free_pts);
@@ -101,9 +122,9 @@ void do_undo(void)
     if (A.tb.active) { free(A.tb.text); free(A.tb.st); memset(&A.tb, 0, sizeof A.tb); strcpy(A.tb.font, "Arial"); A.tb.size = 14; A.tb.sel = -1; }
     if (A.sel.active) sel_cancel();
     if (!A.nundo) return;
-    if (A.nredo == 3) { img_free(A.redo[0]); tl_free(&A.tredo[0]); A.redo[0] = A.redo[1]; A.redo[1] = A.redo[2]; A.tredo[0] = A.tredo[1]; A.tredo[1] = A.tredo[2]; A.nredo = 2; }
-    A.tredo[A.nredo] = A.tl; A.redo[A.nredo++] = A.img;
-    A.img = A.undo[--A.nundo]; A.tl = A.tundo[A.nundo];
+    if (A.nredo == 3) { img_free(A.redo[0]); tl_free(&A.tredo[0]); sl_free(&A.sredo[0]); A.redo[0] = A.redo[1]; A.redo[1] = A.redo[2]; A.tredo[0] = A.tredo[1]; A.tredo[1] = A.tredo[2]; A.sredo[0] = A.sredo[1]; A.sredo[1] = A.sredo[2]; A.nredo = 2; }
+    A.tredo[A.nredo] = A.tl; A.sredo[A.nredo] = A.sl; A.redo[A.nredo++] = A.img;
+    A.img = A.undo[--A.nundo]; A.tl = A.tundo[A.nundo]; A.sl = A.sundo[A.nundo]; A.ssel = -1;
     A.dirty = 1; view_clamp();
 }
 void do_redo(void)
@@ -111,9 +132,9 @@ void do_redo(void)
     tool_cancel();
     if (A.sel.active) sel_cancel();
     if (!A.nredo) return;
-    if (A.nundo == 3) { img_free(A.undo[0]); tl_free(&A.tundo[0]); A.undo[0] = A.undo[1]; A.undo[1] = A.undo[2]; A.tundo[0] = A.tundo[1]; A.tundo[1] = A.tundo[2]; A.nundo = 2; }
-    A.tundo[A.nundo] = A.tl; A.undo[A.nundo++] = A.img;
-    A.img = A.redo[--A.nredo]; A.tl = A.tredo[A.nredo];
+    if (A.nundo == 3) { img_free(A.undo[0]); tl_free(&A.tundo[0]); sl_free(&A.sundo[0]); A.undo[0] = A.undo[1]; A.undo[1] = A.undo[2]; A.tundo[0] = A.tundo[1]; A.tundo[1] = A.tundo[2]; A.sundo[0] = A.sundo[1]; A.sundo[1] = A.sundo[2]; A.nundo = 2; }
+    A.tundo[A.nundo] = A.tl; A.sundo[A.nundo] = A.sl; A.undo[A.nundo++] = A.img;
+    A.img = A.redo[--A.nredo]; A.tl = A.tredo[A.nredo]; A.sl = A.sredo[A.nredo]; A.ssel = -1;
     A.dirty = 1; view_clamp();
 }
 
@@ -320,20 +341,30 @@ void text_commit(void)
     strcpy(t->font, font); t->size = sz; t->bold = b; t->italic = it; t->underline = u; t->sel = -1;
     A.dirty = 1;
 }
+static void shape_render(Img *im, const Shape *s)
+{
+    switch (s->kind) {
+    case 0: cv_line(im, s->p[0].x, s->p[0].y, s->p[1].x, s->p[1].y, s->outline, s->lw); break;
+    case 1: cv_curve(im, s->p[0], s->p[1], s->p[2], s->p[3], s->outline, s->lw); break;
+    case 2: case 3: case 4: cv_shape(im, s->kind == 2 ? SH_RECT : s->kind == 3 ? SH_ELLIPSE : SH_RRECT, s->p[0].x, s->p[0].y, s->p[1].x, s->p[1].y, s->fillstyle, s->outline, s->fill, s->lw); break;
+    case 5: cv_poly(im, s->p, s->n, s->closed, s->fillstyle, s->outline, s->fill, s->lw); break;
+    }
+}
 static void blit_objects(Img *dst)
 {
+    for (int i = 0; i < A.sl.n; i++) shape_render(dst, &A.sl.o[i]);
     for (int i = 0; i < A.tl.n; i++) { TextBox save = A.tb; A.tb = A.tl.o[i]; A.tb.active = 1; text_blit(dst); A.tb = save; }
 }
 /* burn the finished text boxes into the picture (called before anything else edits the picture) */
 void app_bake_text(void)
 {
     if (A.tb.active) text_commit();
-    if (!A.tl.n) return;
-    blit_objects(A.img); tl_free(&A.tl); A.dirty = 1;
+    if (!A.tl.n && !A.sl.n) return;
+    blit_objects(A.img); tl_free(&A.tl); sl_free(&A.sl); A.ssel = -1; A.dirty = 1;
 }
 Img *app_flat_image(int *owned)
 {
-    if (!A.tl.n) { *owned = 0; return A.img; }
+    if (!A.tl.n && !A.sl.n) { *owned = 0; return A.img; }
     Img *c = img_clone(A.img); blit_objects(c); *owned = 1; return c;
 }
 static int tb_activate_at(int ix, int iy)          /* re-open the topmost finished box under the point */
@@ -505,20 +536,26 @@ static void shape_colors(int btn, px_t *o, px_t *f)
     *f = btn == BTN_RIGHT ? A.fg : A.bg;
     if (A.o_fill == 2) *f = *o;
 }
-static void draw_drag_shape(int mods)
+static Shape drag_shape(int mods)
 {
+    Shape s; memset(&s, 0, sizeof s);
     Pt a = D.start, b = D.last;
-    px_t o, f; shape_colors(D.btn, &o, &f);
-    int lw = (A.tool == T_LINE) ? A.o_line + 1 : shape_lw();
-    restore_base();
+    shape_colors(D.btn, &s.outline, &s.fill);
+    s.n = 2; s.p = (Pt *)malloc(sizeof(Pt) * 2);
     if (D.tool == T_LINE) {
         if (mods & MOD_SHIFT) b = constrain_line(a, b);
-        cv_line(A.img, a.x, a.y, b.x, b.y, col_for(D.btn), lw);
+        s.kind = 0; s.lw = A.o_line + 1; s.outline = col_for(D.btn);
     } else {
         if (mods & MOD_SHIFT) { int dx = b.x - a.x, dy = b.y - a.y, m = abs(dx) > abs(dy) ? abs(dx) : abs(dy); b.x = a.x + (dx < 0 ? -m : m); b.y = a.y + (dy < 0 ? -m : m); }
-        int k = D.tool == T_RECT ? SH_RECT : D.tool == T_ELLIPSE ? SH_ELLIPSE : SH_RRECT;
-        cv_shape(A.img, k, a.x, a.y, b.x, b.y, A.o_fill, o, f, lw);
+        s.kind = D.tool == T_RECT ? 2 : D.tool == T_ELLIPSE ? 3 : 4; s.lw = shape_lw(); s.fillstyle = A.o_fill;
     }
+    s.p[0] = a; s.p[1] = b;
+    return s;
+}
+static void draw_drag_shape(int mods)
+{
+    Shape s = drag_shape(mods);
+    restore_base(); shape_render(A.img, &s); free(s.p);
 }
 static void curve_draw(int upto)
 {
@@ -526,6 +563,15 @@ static void curve_draw(int upto)
     px_t c = col_for(CV.btn); int lw = A.o_line + 1;
     if (upto == 1) cv_line(A.img, CV.p[0].x, CV.p[0].y, CV.p[3].x, CV.p[3].y, c, lw);
     else cv_curve(A.img, CV.p[0], CV.p[1], CV.p[2], CV.p[3], c, lw);
+}
+static void curve_finish(void)          /* the drawn curve becomes an editable object */
+{
+    restore_base();
+    Shape s; memset(&s, 0, sizeof s);
+    s.kind = 1; s.n = 4; s.p = (Pt *)malloc(sizeof(Pt) * 4); memcpy(s.p, CV.p, sizeof(Pt) * 4);
+    s.outline = col_for(CV.btn); s.lw = A.o_line + 1;
+    sl_add(&A.sl, s);
+    CV.phase = 0; D.base = NULL;
 }
 static void poly_draw(Pt cur, int closed)
 {
@@ -539,8 +585,16 @@ static void poly_draw(Pt cur, int closed)
 static void poly_finish(int closed)
 {
     if (!PG.active) return;
-    if (closed && PG.n >= 2) { Pt last = PG.p[PG.n - 1]; poly_draw(last, 1); }
-    else if (PG.n >= 1) poly_draw(PG.p[PG.n - 1], 0);
+    restore_base();
+    if (PG.n >= 1) {
+        Shape s; memset(&s, 0, sizeof s);
+        int n = PG.n; closed = closed && n >= 2;
+        s.kind = 5; s.p = (Pt *)malloc(sizeof(Pt) * (size_t)(n + 1)); memcpy(s.p, PG.p, sizeof(Pt) * (size_t)n);
+        if (!closed && n == 1) s.p[n++] = PG.p[0];
+        s.n = n; s.closed = closed; s.fillstyle = A.o_fill; s.lw = shape_lw();
+        shape_colors(PG.btn, &s.outline, &s.fill);
+        sl_add(&A.sl, s);
+    }
     PG.active = 0; PG.n = 0; D.base = NULL;
 }
 void tool_cancel(void)
@@ -558,8 +612,9 @@ void tool_select(int t)
 {
     if (t == A.tool) return;
     /* finish pending multi-step tools */
-    if (CV.phase) { curve_draw(2); CV.phase = 0; D.base = NULL; }
+    if (CV.phase) curve_finish();
     if (PG.active) poly_finish(0);
+    A.ssel = -1;
     if (A.tb.active) text_commit();
     if (t != T_SELECT && t != T_FREESEL) sel_commit();
     else if (A.sel.active && A.sel.mask && t == T_SELECT) sel_commit();
@@ -570,12 +625,148 @@ void tool_select(int t)
 
 static void clamp_pt(int *x, int *y) { if (*x < 0) *x = 0; if (*y < 0) *y = 0; if (*x >= A.img->w) *x = A.img->w - 1; if (*y >= A.img->h) *y = A.img->h - 1; }
 
+
+/* text boxes: click/drag inside a box. Returns 1 if the click was used. */
+static int text_press(int ix, int iy, int allow_new)
+{
+    TextBox *t = &A.tb;
+    if (t->active && tb_hit(ix, iy) == 0) text_commit();
+    if (!t->active) tb_activate_at(ix, iy);
+    if (t->active) {
+        int h = tb_hit(ix, iy);
+        if (h == 2) { D.active = 1; D.mode = 10; D.off = (Pt){ ix - t->x, iy - t->y }; return 1; }
+        if (h >= 3) { D.active = 1; D.mode = 11; D.handle = h - 3; D.ox = t->x; D.oy = t->y; D.ow = t->w; D.oh = t->h; return 1; }
+        if (h == 1) {
+            static unsigned last_t; static int last_x, last_y;
+            unsigned now = plat_ticks_ms(); int idx = tb_index_at(ix, iy);
+            if (now - last_t < 450 && abs(ix - last_x) < 4 && abs(iy - last_y) < 4 && t->len) {
+                int a, b; tb_word_at(idx, &a, &b); t->sel = a; t->caret = b; last_t = 0; D.active = 1; D.mode = 13; return 1;
+            }
+            last_t = now; last_x = ix; last_y = iy;
+            t->caret = idx; t->sel = idx; tb_sync_style(); D.active = 1; D.mode = 12; return 1;
+        }
+    }
+    if (!allow_new) return 0;
+    if (!t->font[0]) { strcpy(t->font, "Arial"); t->size = 14; }
+    D.active = 1; D.mode = 3; return 1;
+}
+
+/* ---- editable shape objects ---- */
+static int shape_handles(const Shape *s, Pt *h)         /* handle positions; box shapes get 8 (same order as text), others one per point */
+{
+    if (s->kind >= 2 && s->kind <= 4) {
+        int x0 = s->p[0].x < s->p[1].x ? s->p[0].x : s->p[1].x, x1 = s->p[0].x < s->p[1].x ? s->p[1].x : s->p[0].x;
+        int y0 = s->p[0].y < s->p[1].y ? s->p[0].y : s->p[1].y, y1 = s->p[0].y < s->p[1].y ? s->p[1].y : s->p[0].y;
+        int xm = (x0 + x1) / 2, ym = (y0 + y1) / 2;
+        Pt q[8] = { { x0, y0 }, { xm, y0 }, { x1, y0 }, { x1, ym }, { x1, y1 }, { xm, y1 }, { x0, y1 }, { x0, ym } };
+        memcpy(h, q, sizeof q); return 8;
+    }
+    memcpy(h, s->p, sizeof(Pt) * (size_t)s->n); return s->n;
+}
+static int seg_dist2(int px, int py, Pt a, Pt b)          /* squared distance point-segment */
+{
+    double dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy, u = l2 ? ((px - a.x) * dx + (py - a.y) * dy) / l2 : 0;
+    if (u < 0) u = 0; if (u > 1) u = 1;
+    double qx = a.x + u * dx - px, qy = a.y + u * dy - py; return (int)(qx * qx + qy * qy);
+}
+static int shape_body_hit(const Shape *s, int ix, int iy)
+{
+    int tol = s->lw / 2 + 3 + 200 / A.zp, t2 = tol * tol;
+    Pt pl[64]; int n = 0;
+    if (s->kind == 0) { pl[0] = s->p[0]; pl[1] = s->p[1]; n = 2; }
+    else if (s->kind == 1) {
+        for (int i = 0; i <= 24; i++) {
+            double u = i / 24.0, v = 1 - u, b0 = v * v * v, b1 = 3 * v * v * u, b2 = 3 * v * u * u, b3 = u * u * u;
+            pl[n].x = (int)(b0 * s->p[0].x + b1 * s->p[1].x + b2 * s->p[2].x + b3 * s->p[3].x + 0.5);
+            pl[n].y = (int)(b0 * s->p[0].y + b1 * s->p[1].y + b2 * s->p[2].y + b3 * s->p[3].y + 0.5); n++;
+        }
+    } else if (s->kind == 5) {
+        int m = s->n < 63 ? s->n : 63; memcpy(pl, s->p, sizeof(Pt) * (size_t)m); n = m;
+        if (s->closed && n < 64) pl[n++] = pl[0];
+    } else {
+        int x0 = s->p[0].x < s->p[1].x ? s->p[0].x : s->p[1].x, x1 = s->p[0].x < s->p[1].x ? s->p[1].x : s->p[0].x;
+        int y0 = s->p[0].y < s->p[1].y ? s->p[0].y : s->p[1].y, y1 = s->p[0].y < s->p[1].y ? s->p[1].y : s->p[0].y;
+        if (s->fillstyle && ix >= x0 && ix <= x1 && iy >= y0 && iy <= y1) return 1;
+        if (s->kind == 3) {                                  /* ellipse: normalised radius test around the outline */
+            double rx = (x1 - x0) / 2.0 + 0.5, ry = (y1 - y0) / 2.0 + 0.5, cx = (x0 + x1) / 2.0, cy = (y0 + y1) / 2.0;
+            if (rx < 1) rx = 1; if (ry < 1) ry = 1;
+            double d = sqrt(((ix - cx) / rx) * ((ix - cx) / rx) + ((iy - cy) / ry) * ((iy - cy) / ry));
+            double m = (double)tol / (rx < ry ? rx : ry);
+            return d >= 1 - m && d <= 1 + m;
+        }
+        pl[0] = (Pt){ x0, y0 }; pl[1] = (Pt){ x1, y0 }; pl[2] = (Pt){ x1, y1 }; pl[3] = (Pt){ x0, y1 }; pl[4] = pl[0]; n = 5;
+    }
+    if ((s->kind == 5 && s->closed && s->fillstyle) && n >= 3) {          /* polygon interior (even-odd) */
+        int in = 0;
+        for (int i = 0, j = n - 1; i < n; j = i++)
+            if (((pl[i].y > iy) != (pl[j].y > iy)) && (ix < (pl[j].x - pl[i].x) * (double)(iy - pl[i].y) / (pl[j].y - pl[i].y) + pl[i].x)) in = !in;
+        if (in) return 1;
+    }
+    for (int i = 0; i + 1 < n; i++) if (seg_dist2(ix, iy, pl[i], pl[i + 1]) <= t2) return 1;
+    if (n == 1 && abs(ix - pl[0].x) <= tol && abs(iy - pl[0].y) <= tol) return 1;
+    return 0;
+}
+static int shape_handle_at(int si, int ix, int iy)
+{
+    Pt h[512]; int n = shape_handles(&A.sl.o[si], h), hs = 3 + 300 / A.zp;
+    for (int i = n - 1; i >= 0; i--) if (abs(ix - h[i].x) <= hs && abs(iy - h[i].y) <= hs) return i;
+    return -1;
+}
+static void none_press(int ix, int iy)
+{
+    if (A.tb.active && tb_hit(ix, iy)) { text_press(ix, iy, 0); return; }
+    if (A.tb.active) text_commit();
+    if (A.ssel >= A.sl.n) A.ssel = -1;
+    if (A.ssel >= 0) {
+        int h = shape_handle_at(A.ssel, ix, iy);
+        if (h >= 0) {
+            Shape *s = &A.sl.o[A.ssel];
+            if (s->kind >= 2 && s->kind <= 4) {                  /* normalise so handles map to corners */
+                Pt a = s->p[0], b = s->p[1];
+                s->p[0] = (Pt){ a.x < b.x ? a.x : b.x, a.y < b.y ? a.y : b.y }; s->p[1] = (Pt){ a.x < b.x ? b.x : a.x, a.y < b.y ? b.y : a.y };
+            }
+            D.active = 1; D.mode = 21; D.handle = h; D.moved = 0; return;
+        }
+    }
+    if (text_press(ix, iy, 0)) { A.ssel = -1; return; }
+    for (int i = A.sl.n - 1; i >= 0; i--)
+        if (shape_body_hit(&A.sl.o[i], ix, iy)) { A.ssel = i; D.active = 1; D.mode = 20; D.moved = 0; D.off = (Pt){ ix, iy }; return; }
+    A.ssel = -1;
+}
+static void none_move(int ix, int iy)
+{
+    if (D.mode != 20 && D.mode != 21) return;
+    if (A.ssel < 0 || A.ssel >= A.sl.n) return;
+    if (!D.moved) {
+        if (D.mode == 20 && ix == D.off.x && iy == D.off.y) return;
+        undo_push(); D.moved = 1;
+    }
+    Shape *s = &A.sl.o[A.ssel];
+    if (D.mode == 20) {
+        int dx = ix - D.off.x, dy = iy - D.off.y;
+        for (int i = 0; i < s->n; i++) { s->p[i].x += dx; s->p[i].y += dy; }
+        D.off = (Pt){ ix, iy };
+    } else if (s->kind >= 2 && s->kind <= 4) {
+        int h = D.handle;
+        if (h == 0 || h == 6 || h == 7) s->p[0].x = ix; if (h == 2 || h == 3 || h == 4) s->p[1].x = ix;
+        if (h == 0 || h == 1 || h == 2) s->p[0].y = iy; if (h == 4 || h == 5 || h == 6) s->p[1].y = iy;
+    } else s->p[D.handle] = (Pt){ ix, iy };
+    A.dirty = 1;
+}
+static void none_delete_selected(void)
+{
+    if (A.ssel < 0 || A.ssel >= A.sl.n) return;
+    undo_push();
+    free(A.sl.o[A.ssel].p);
+    memmove(&A.sl.o[A.ssel], &A.sl.o[A.ssel + 1], sizeof(Shape) * (size_t)(A.sl.n - A.ssel - 1)); A.sl.n--; A.ssel = -1;
+}
+
 void tool_press(int ix, int iy, int btn, int mods)
 {
     if (btn != BTN_LEFT && btn != BTN_RIGHT) return;
-    if (A.tool != T_TEXT && A.tool != T_MAG && !D.active) app_bake_text();   /* finished text boxes become part of the picture */
+    if ((A.tool == T_PENCIL || A.tool == T_BRUSH || A.tool == T_AIR || A.tool == T_ERASER || A.tool == T_FILL || A.tool == T_PICK || A.tool == T_SELECT || A.tool == T_FREESEL) && !D.active) app_bake_text();   /* only pixel tools bake objects into the picture */
     if (D.active) { /* second button while dragging: cancel */
-        if (D.tool >= T_LINE && D.tool != T_CURVE && D.tool != T_POLY) { restore_base(); undo_drop_last(); D.active = 0; D.base = NULL; }
+        if (D.tool >= T_LINE && D.tool < T_COUNT && D.tool != T_CURVE && D.tool != T_POLY) { restore_base(); undo_drop_last(); D.active = 0; D.base = NULL; }
         else if (D.tool == T_PENCIL || D.tool == T_BRUSH || D.tool == T_ERASER || D.tool == T_AIR) { D.active = 0; }
         return;
     }
@@ -615,27 +806,8 @@ void tool_press(int ix, int iy, int btn, int mods)
             D.active = 1; poly_draw((Pt){ ix, iy }, 0);
         }
         break;
-    case T_TEXT: {
-        TextBox *t = &A.tb;
-        if (t->active && tb_hit(ix, iy) == 0) text_commit();
-        if (!t->active) tb_activate_at(ix, iy);
-        if (t->active) {
-            int h = tb_hit(ix, iy);
-            if (h == 2) { D.active = 1; D.mode = 10; D.off = (Pt){ ix - t->x, iy - t->y }; break; }
-            if (h >= 3) { D.active = 1; D.mode = 11; D.handle = h - 3; D.ox = t->x; D.oy = t->y; D.ow = t->w; D.oh = t->h; break; }
-            if (h == 1) {
-                static unsigned last_t; static int last_x, last_y;
-                unsigned now = plat_ticks_ms(); int idx = tb_index_at(ix, iy);
-                if (now - last_t < 450 && abs(ix - last_x) < 4 && abs(iy - last_y) < 4 && t->len) {
-                    int a, b; tb_word_at(idx, &a, &b); t->sel = a; t->caret = b; last_t = 0; D.active = 1; D.mode = 13; break;
-                }
-                last_t = now; last_x = ix; last_y = iy;
-                t->caret = idx; t->sel = idx; tb_sync_style(); D.active = 1; D.mode = 12; break;
-            }
-        }
-        if (!t->font[0]) { strcpy(t->font, "Arial"); t->size = 14; }
-        D.active = 1; D.mode = 3; break;
-    }
+    case T_TEXT: text_press(ix, iy, 1); break;
+    case T_NONE: none_press(ix, iy); break;
     case T_SELECT: case T_FREESEL: {
         int h = sel_hit(ix, iy);
         if (h == 1) {
@@ -678,6 +850,8 @@ void tool_move(int ix, int iy, int mods)
         else if (CV.phase == 3) { CV.p[2] = (Pt){ ix, iy }; curve_draw(2); }
         break;
     case T_POLY: if (PG.active) poly_draw((Pt){ ix, iy }, 0); break;
+    case T_NONE: if (D.mode >= 20) { none_move(ix, iy); break; }   /* else: text box drag below */
+        /* fall through */
     case T_TEXT: {
         TextBox *t = &A.tb;
         if (D.mode == 10) { t->x = ix - D.off.x; t->y = iy - D.off.y; }
@@ -726,13 +900,19 @@ void tool_release(int ix, int iy, int mods)
     case T_CURVE:
         D.active = 0;
         if (CV.phase == 1) {
-            if (CV.p[0].x == CV.p[3].x && CV.p[0].y == CV.p[3].y) { curve_draw(2); CV.phase = 0; D.base = NULL; } /* just a dot */
+            if (CV.p[0].x == CV.p[3].x && CV.p[0].y == CV.p[3].y) curve_finish(); /* just a dot */
             else CV.phase = 2;
         } else if (CV.phase == 2) CV.phase = 3;
-        else if (CV.phase == 3) { curve_draw(2); CV.phase = 0; D.base = NULL; }
+        else if (CV.phase == 3) curve_finish();
         break;
     case T_POLY: D.active = 0; break;
-    case T_LINE: case T_RECT: case T_ELLIPSE: case T_RRECT: D.active = 0; D.base = NULL; break;
+    case T_LINE: case T_RECT: case T_ELLIPSE: case T_RRECT: {
+        D.active = 0;
+        Shape s = drag_shape(mods); restore_base(); sl_add(&A.sl, s); D.base = NULL; break; }
+    case T_NONE:
+        D.active = 0;
+        if (D.mode >= 10 && D.mode < 20) { if (D.mode == 12 && A.tb.sel == A.tb.caret) A.tb.sel = -1; tb_sync_style(); }
+        break;
     case T_TEXT: {
         D.active = 0;
         if (D.mode >= 10) { if (D.mode == 12 && A.tb.sel == A.tb.caret) A.tb.sel = -1; tb_sync_style(); break; }
@@ -782,6 +962,10 @@ static int tool_key_impl(const PEvent *ev)
     if (PG.active && ev->type == EV_KEYDOWN && ev->key == KEY_ENTER) { poly_finish(1); return 1; }
     if (CV.phase && ev->type == EV_KEYDOWN && ev->key == KEY_ESC) { tool_cancel(); return 1; }
     if (D.active && ev->type == EV_KEYDOWN && ev->key == KEY_ESC && D.tool != T_CURVE && D.tool != T_POLY) { tool_cancel(); return 1; }
+    if (A.tool == T_NONE && !t->active && A.ssel >= 0 && ev->type == EV_KEYDOWN && !(ev->mods & (MOD_CTRL | MOD_ALT))) {
+        if (ev->key == KEY_DELETE || ev->key == KEY_BACKSPACE) { none_delete_selected(); return 1; }
+        if (ev->key == KEY_ESC) { A.ssel = -1; return 1; }
+    }
     if (!t->active) return 0;
     if (ev->type == EV_CHAR) {
         if (ev->ch < 32 || ev->ch == 127) return 0;
@@ -840,7 +1024,7 @@ int tool_key(const PEvent *ev)
 /* ---------------- composition & overlays ---------------- */
 Img *build_comp(int *owned)
 {
-    int need = (A.sel.active && A.sel.lifted) || A.tb.active || A.tl.n;
+    int need = (A.sel.active && A.sel.lifted) || A.tb.active || A.tl.n || A.sl.n;
     if (!need) { *owned = 0; return A.img; }
     Img *c = img_clone(A.img);
     blit_objects(c);
@@ -888,6 +1072,14 @@ void draw_overlays(Img *fb)
         int x0 = D.start.x < D.last.x ? D.start.x : D.last.x, y0 = D.start.y < D.last.y ? D.start.y : D.last.y;
         int x1 = D.start.x < D.last.x ? D.last.x : D.start.x, y1 = D.start.y < D.last.y ? D.last.y : D.start.y;
         dotted_screen_rect(fb, ox + z_i2s(x0) - 1, oy + z_i2s(y0) - 1, z_i2s(x1 - x0 + 1) + 2, z_i2s(y1 - y0 + 1) + 2);
+    }
+    if (A.tool == T_NONE) {
+        if (A.ssel >= 0 && A.ssel < A.sl.n) {
+            Shape *s = &A.sl.o[A.ssel]; Pt h[512]; int n = shape_handles(s, h);
+            for (int i = 0; i < n; i++) handle_box(fb, ox + z_i2s(h[i].x) + z_i2s(1) / 2, oy + z_i2s(h[i].y) + z_i2s(1) / 2);
+        }
+        if (!D.active || D.mode < 10)
+            for (int i = 0; i < A.tl.n; i++) { TextBox *o = &A.tl.o[i]; if (g_min && g_mx >= o->x - 2 && g_my >= o->y - 2 && g_mx < o->x + o->w + 2 && g_my < o->y + o->h + 2) dotted_screen_rect(fb, ox + z_i2s(o->x) - 1, oy + z_i2s(o->y) - 1, z_i2s(o->w) + 2, z_i2s(o->h) + 2); }
     }
     if (A.tb.active) {
         TextBox *t = &A.tb;
@@ -987,6 +1179,22 @@ void set_canvas_size(int w, int h)
             if (x >= ow || y >= oh) n->p[(size_t)y * w + x] = A.shadow->p[(size_t)y * A.shadow->w + x];
     img_free(A.img); A.img = n;
     ui_relayout(); view_clamp();
+}
+void app_crop_to_selection(void)
+{
+    if (!A.sel.active) return;
+    int x = A.sel.x, y = A.sel.y, w = A.sel.w, h = A.sel.h;
+    sel_commit(); app_bake_text();
+    if (x < 0) { w += x; x = 0; } if (y < 0) { h += y; y = 0; }
+    if (x + w > A.img->w) w = A.img->w - x; if (y + h > A.img->h) h = A.img->h - y;
+    if (w < 1 || h < 1) return;
+    undo_push();
+    Img *n = img_new(w, h, A.bg);
+    for (int j = 0; j < h; j++) memcpy(n->p + (size_t)j * w, A.img->p + (size_t)(y + j) * A.img->w + x, sizeof(px_t) * (size_t)w);
+    img_free(A.img); A.img = n;
+    img_free(A.shadow); A.shadow = NULL;
+    A.sx = A.sy = 0; A.dirty = 1;
+    ui_relayout(); view_clamp(); update_title();
 }
 void app_init(void)
 {
@@ -1353,6 +1561,7 @@ int cmd_exec(int id)
         if (!A.path[0]) return cmd_exec(CMD_SAVEAS);
         { int ow; Img *f = app_flat_image(&ow); int ok = save_image(A.path, f, -1); if (ow) img_free(f); if (ok) { A.dirty = 0; update_title(); } }
         break;
+    case CMD_CROP: app_crop_to_selection(); break;
     case CMD_COPYIMG: {
         if (A.tb.active) text_commit();
         sel_commit();
