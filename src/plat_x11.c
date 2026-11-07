@@ -160,10 +160,11 @@ int plat_init(int w, int h, int minw, int minh, const char *title)
     vis = DefaultVisual(dpy, scr);
     depth = DefaultDepth(dpy, scr);
     XSetWindowAttributes sa;
-    sa.background_pixel = BlackPixel(dpy, scr);
+    sa.background_pixmap = None;            /* never let the server clear the window: that caused the flashing while resizing */
+    sa.bit_gravity = NorthWestGravity;      /* keep existing pixels in place while the window is being resized */
     sa.event_mask = ExposureMask | StructureNotifyMask | KeyPressMask | ButtonPressMask | ButtonReleaseMask |
                     PointerMotionMask | LeaveWindowMask | FocusChangeMask | PropertyChangeMask;
-    win = XCreateWindow(dpy, RootWindow(dpy, scr), 0, 0, w, h, 0, depth, InputOutput, vis, CWBackPixel | CWEventMask, &sa);
+    win = XCreateWindow(dpy, RootWindow(dpy, scr), 0, 0, w, h, 0, depth, InputOutput, vis, CWBackPixmap | CWBitGravity | CWEventMask, &sa);
     XSizeHints *sh = XAllocSizeHints();
     sh->flags = PMinSize | PSize;
     sh->min_width = minw; sh->min_height = minh; sh->width = w; sh->height = h;
@@ -492,6 +493,8 @@ int plat_wait_event(PEvent *ev, int timeout_ms)
         while (XPending(dpy)) {
             XEvent e; XNextEvent(dpy, &e);
             if (XFilterEvent(&e, None)) continue;
+            /* while dragging a window edge the WM sends a burst of ConfigureNotify: only the latest size matters */
+            if (e.type == ConfigureNotify) { XEvent n; while (XCheckTypedWindowEvent(dpy, e.xconfigure.window, ConfigureNotify, &n)) e = n; }
             /* coalesce consecutive motion events */
             while (e.type == MotionNotify && XPending(dpy)) {
                 XEvent n; XPeekEvent(dpy, &n);

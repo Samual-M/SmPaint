@@ -978,7 +978,7 @@ void app_init(void)
     for (int i = 0; i < 16; i++) A.custom[i] = C_WHITE;
     A.fg = RGB(0, 0, 0); A.bg = RGB(255, 255, 255);
     A.tool = T_PENCIL; A.prevtool = T_PENCIL;
-    A.zp = 85; A.show_toolbox = A.show_colorbox = A.show_status = 1; A.show_text = 1;
+    A.zp = 70; A.show_toolbox = A.show_colorbox = A.show_status = 1; A.show_text = 1;
     /* middle option of each size panel (even counts round up) */
     A.o_eraser = 2; A.o_brush = 6; A.o_air = 1; A.o_line = 2; A.o_shapew = 3; A.o_fill = 0; A.o_mag = 1; A.o_trans = 0;
     A.grid_w = A.grid_h = 8; A.dpi = 96;
