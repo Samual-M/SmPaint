@@ -10,7 +10,7 @@
 #include "imgio.h"
 #include "resdata.h"
 
-#define APP_VERSION "V1.12"
+#define APP_VERSION "V1.13"
 
 typedef struct { int x, y; } Pt;
 typedef struct { int x, y, w, h; } Rc;
@@ -50,7 +50,9 @@ typedef struct {
     int minw, minh;     /* size the box was drawn with; it grows beyond this to fit the text */
     char *text; TStyle *st; int len, cap, caret, sel;   /* sel = selection anchor, -1 none */
     char font[64]; int size, bold, italic, underline;
+    int frozen, from_obj; px_t fg, bg; int trans;   /* committed boxes keep their own colours; from_obj = re-opened for editing */
 } TextBox;
+typedef struct { int n; TextBox *o; } TList;      /* finished text boxes: stay editable until something else changes the picture */
 
 typedef struct {
     Img *fb; int ww, wh;
@@ -63,7 +65,7 @@ typedef struct {
     int show_toolbox, show_colorbox, show_status, show_text, show_grid, show_thumb;
     int grid_w, grid_h, tile_grid;
     char path[1024]; int dirty, bw;
-    Sel sel; TextBox tb;
+    Sel sel; TextBox tb; TList tl, tundo[3], tredo[3];
     char status_help[256];
     char recent[4][1024]; int nrecent;
     Img *clip; /* internal clipboard */
@@ -196,6 +198,10 @@ void text_set_font(const char *name);
 void text_set_size(int pt);
 void text_toggle(int which);
 void text_select_all(void);
+void app_bake_text(void);
+Img *app_flat_image(int *owned);
+int text_has_sel(void);
+int text_edit_cmd(int id);
 void tool_status_text(char *out, int n);
 extern int g_file_filter;
 int list_popup(const char **items, int n, int x, int y, int w, int cur);

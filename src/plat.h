@@ -49,6 +49,13 @@ uint32_t plat_ticks_ms(void);
 /* clipboard (images). pixels are 0x00RRGGBB, row-major */
 void plat_clip_set_image(const uint32_t *px, int w, int h);
 uint32_t *plat_clip_get_image(int *w, int *h); /* malloc'd or NULL */
+void plat_clip_set_text(const char *utf8);
+char *plat_clip_get_text(void);                 /* malloc'd UTF-8 or NULL */
+/* Native file dialog (the desktop's own: KDE/GNOME dialog, Windows common dialog, macOS panel).
+   names/pats: filter display names and ';'-separated patterns like "*.jpg;*.jpeg". On entry *fidx is the preselected filter,
+   on return the chosen one (or -1 if unknown). path = initial path in / out chosen path (UTF-8, '/').
+   Returns 1 = chosen, 0 = cancelled, -1 = no native dialog available (caller falls back to the built-in one). */
+int plat_file_dialog(int save, const char *title, char *path, int pathn, const char *const *names, const char *const *pats, int nfilters, int *fidx);
 
 /* system font rendering for the Text tool. Returns malloc'd w*h alpha mask (0 or 255), or NULL. */
 uint8_t *plat_render_text(const char *utf8, const char *family, int px_size, int bold, int italic, int underline,

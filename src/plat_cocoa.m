@@ -446,6 +446,23 @@ void plat_clip_set_image(const uint32_t *px, int w, int h)
     }
     free(png);
 }
+void plat_clip_set_text(const char *utf8)
+{
+    @autoreleasepool {
+        NSPasteboard *pb = [NSPasteboard generalPasteboard];
+        [pb clearContents];
+        [pb setString:[NSString stringWithUTF8String:utf8 ? utf8 : ""] forType:NSPasteboardTypeString];
+    }
+}
+char *plat_clip_get_text(void)
+{
+    char *out = NULL;
+    @autoreleasepool {
+        NSString *s = [[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString];
+        if (s) out = strdup([s UTF8String]);
+    }
+    return out;
+}
 uint32_t *plat_clip_get_image(int *w, int *h)
 {
     uint32_t *out = NULL;
@@ -593,4 +610,35 @@ void plat_fit_window(int w, int h)
         if (NSMaxY(f) > NSMaxY(vis)) f.origin.y = NSMaxY(vis) - f.size.height;
         [g_window setFrame:f display:YES];
     }
+}
+
+
+/* ------------------------------------------------------------------ native file dialog (NSOpenPanel / NSSavePanel) */
+int plat_file_dialog(int save, const char *title, char *path, int pathn, const char *const *names, const char *const *pats, int nfilters, int *fidx)
+{
+    (void)names;
+    int ret = 0;
+    @autoreleasepool {
+        NSMutableArray *exts = [NSMutableArray array];
+        for (int i = 0; i < nfilters; i++) {
+            if (!strcmp(pats[i], "*")) { exts = nil; break; }
+            NSArray *parts = [[NSString stringWithUTF8String:pats[i]] componentsSeparatedByString:@";"];
+            for (NSString *p in parts) {
+                NSString *e = [p hasPrefix:@"*."] ? [p substringFromIndex:2] : p;
+                if (e.length && ![exts containsObject:e]) [exts addObject:e];
+            }
+        }
+        NSString *full = [NSString stringWithUTF8String:path];
+        NSString *dir = [full stringByDeletingLastPathComponent], *file = [full lastPathComponent];
+        NSSavePanel *p = save ? [NSSavePanel savePanel] : [NSOpenPanel openPanel];
+        [p setTitle:[NSString stringWithUTF8String:title]];
+        if (exts.count) [p setAllowedFileTypes:exts];
+        if (dir.length) [p setDirectoryURL:[NSURL fileURLWithPath:dir]];
+        if (save) [p setNameFieldStringValue:file];
+        if ([p runModal] == NSModalResponseOK) {
+            const char *u = [[[p URL] path] UTF8String];
+            if (u) { snprintf(path, (size_t)pathn, "%s", u); *fidx = -1; ret = 1; }
+        }
+    }
+    return ret;
 }

@@ -23,6 +23,7 @@
 #include <windowsx.h>
 #include <shellapi.h>
 #include <shlobj.h>
+#include <commdlg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -451,6 +452,35 @@ void plat_clip_set_image(const uint32_t *px, int w, int h)
     }
     CloseClipboard();
 }
+void plat_clip_set_text(const char *utf8)
+{
+    if (!hwnd || !OpenClipboard(hwnd)) return;
+    EmptyClipboard();
+    int n = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, NULL, 0);
+    HGLOBAL g = n > 0 ? GlobalAlloc(GMEM_MOVEABLE, (size_t)n * sizeof(wchar_t)) : NULL;
+    if (g) {
+        wchar_t *p = (wchar_t *)GlobalLock(g);
+        if (p) { MultiByteToWideChar(CP_UTF8, 0, utf8, -1, p, n); GlobalUnlock(g); if (!SetClipboardData(CF_UNICODETEXT, g)) GlobalFree(g); }
+        else GlobalFree(g);
+    }
+    CloseClipboard();
+}
+char *plat_clip_get_text(void)
+{
+    char *out = NULL;
+    if (!OpenClipboard(hwnd)) return NULL;
+    HANDLE g = GetClipboardData(CF_UNICODETEXT);
+    if (g) {
+        const wchar_t *p = (const wchar_t *)GlobalLock(g);
+        if (p) {
+            int n = WideCharToMultiByte(CP_UTF8, 0, p, -1, NULL, 0, NULL, NULL);
+            if (n > 0) { out = (char *)malloc((size_t)n); WideCharToMultiByte(CP_UTF8, 0, p, -1, out, n, NULL, NULL); }
+            GlobalUnlock(g);
+        }
+    }
+    CloseClipboard();
+    return out;
+}
 uint32_t *plat_clip_get_image(int *w, int *h)
 {
     uint32_t *out = NULL;
@@ -645,3 +675,41 @@ int WINAPI WinMain(HINSTANCE hi, HINSTANCE hp, LPSTR cmd, int show)
     return main(argc, argv);
 }
 #endif
+
+
+/* ------------------------------------------------------------------ native file dialog (Windows common dialog) */
+int plat_file_dialog(int save, const char *title, char *path, int pathn, const char *const *names, const char *const *pats, int nfilters, int *fidx)
+{
+    static wchar_t fbuf[8192], file[32768], init[1024];
+    size_t o = 0;
+    for (int i = 0; i < nfilters; i++) {
+        wchar_t *n = u8_to_w(names[i]), *p = u8_to_w(pats[i]);
+        if (!n || !p) { free(n); free(p); return -1; }
+        size_t ln = wcslen(n), lp = wcslen(p);
+        if (o + ln + lp + 4 >= sizeof fbuf / sizeof fbuf[0]) { free(n); free(p); break; }
+        memcpy(fbuf + o, n, (ln + 1) * sizeof(wchar_t)); o += ln + 1;
+        memcpy(fbuf + o, p, (lp + 1) * sizeof(wchar_t)); o += lp + 1;
+        free(n); free(p);
+    }
+    fbuf[o] = 0;
+    wchar_t *wp = u8_to_w(path); wchar_t *wt = u8_to_w(title);
+    file[0] = 0; init[0] = 0;
+    if (wp) {
+        for (wchar_t *c = wp; *c; c++) if (*c == L'/') *c = L'\\';
+        wchar_t *sl = wcsrchr(wp, L'\\');
+        if (sl) { size_t d = (size_t)(sl - wp); if (d >= 1024) d = 1023; wmemcpy(init, wp, d); init[d] = 0; wcsncpy(file, sl + 1, 32767); }
+        else wcsncpy(file, wp, 32767);
+        file[32767] = 0;
+    }
+    OPENFILENAMEW ofn; memset(&ofn, 0, sizeof ofn);
+    ofn.lStructSize = sizeof ofn; ofn.hwndOwner = hwnd; ofn.lpstrFilter = fbuf; ofn.nFilterIndex = (DWORD)((fidx && *fidx >= 0 ? *fidx : 0) + 1);
+    ofn.lpstrFile = file; ofn.nMaxFile = 32768; ofn.lpstrInitialDir = init[0] ? init : NULL; ofn.lpstrTitle = wt;
+    ofn.Flags = OFN_EXPLORER | OFN_NOCHANGEDIR | OFN_HIDEREADONLY | OFN_PATHMUSTEXIST | (save ? OFN_OVERWRITEPROMPT : OFN_FILEMUSTEXIST);
+    BOOL ok = save ? GetSaveFileNameW(&ofn) : GetOpenFileNameW(&ofn);
+    free(wp); free(wt);
+    if (!ok) return CommDlgExtendedError() ? -1 : 0;
+    w_to_u8(file, path, pathn);
+    for (char *c = path; *c; c++) if (*c == '\\') *c = '/';
+    if (fidx) *fidx = (int)ofn.nFilterIndex - 1;
+    return 1;
+}

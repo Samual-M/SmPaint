@@ -74,8 +74,10 @@ void menu_state(int id, int *en, int *ck)
     *en = 1; *ck = 0;
     switch (id) {
     case CMD_UNDO: *en = A.nundo > 0 || A.sel.active; break;
+    case CMD_COPY: case CMD_CUT: if (A.tb.active) { *en = text_has_sel(); break; } *en = A.sel.active; break;
     case CMD_REPEAT: *en = A.nredo > 0; break;
-    case CMD_CUT: case CMD_COPY: case CMD_CLEARSEL: case CMD_COPYTO: *en = A.sel.active; break;
+    case CMD_CLEARSEL: *en = A.sel.active || A.tb.active; break;
+    case CMD_COPYTO: *en = A.sel.active; break;
     case CMD_TOOLBOX: *ck = A.show_toolbox; break;
     case CMD_COLORBOX: *ck = A.show_colorbox; break;
     case CMD_STATUSBAR: *ck = A.show_status; break;
@@ -639,6 +641,12 @@ static void handle_event(const PEvent *ev)
             }
         }
         if (ev->key == KEY_F1) { cmd_exec(CMD_HELP); return; }
+        if ((ev->mods & MOD_CTRL) && (ev->key == '+' || ev->key == '=' || ev->key == KEY_PLUS || ev->key == '-' || ev->key == '_' || ev->key == KEY_MINUS)) {
+            int up = (ev->key == '+' || ev->key == '=' || ev->key == KEY_PLUS);        /* Ctrl + / Ctrl - : next multiple of 5% */
+            int np = up ? (A.zp / 5 + 1) * 5 : ((A.zp - 1) / 5) * 5;
+            zoom_at(np, R_view.x + R_view.w / 2, R_view.y + R_view.h / 2);
+            return;
+        }
         if (!(ev->mods & (MOD_CTRL | MOD_ALT)) && tool_key(ev)) return;
         int cmd = accel_cmd(ev);
         if (cmd) { cmd_exec(cmd); ui_relayout(); }

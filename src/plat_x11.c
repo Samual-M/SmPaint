@@ -16,12 +16,15 @@
 #include <math.h>
 #include <pwd.h>
 #include <stdio.h>
+#include <sys/wait.h>
+#include <signal.h>
 #include <string.h>
 #include <sys/select.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include "plat.h"
 #include "imgio.h"
 
@@ -37,7 +40,7 @@ static XIC xic;
 static int cur_w, cur_h;
 static PEvent pending;
 static int has_pending;
-static uint8_t *clip_png; static size_t clip_png_n;
+static uint8_t *clip_png; static size_t clip_png_n; static char *clip_txt;
 static uint8_t *clip_bmp; static size_t clip_bmp_n;
 
 static int x_err(Display *d, XErrorEvent *e) { (void)d; (void)e; return 0; }
@@ -253,7 +256,7 @@ void plat_set_cursor(void *c)
 /* ---------- clipboard ---------- */
 void plat_clip_set_image(const uint32_t *px, int w, int h)
 {
-    free(clip_png); free(clip_bmp);
+    free(clip_png); free(clip_bmp); free(clip_txt); clip_txt = NULL;
     clip_png = png_encode(px, w, h, &clip_png_n);
     clip_bmp = bmp_encode(px, w, h, 24, 1, &clip_bmp_n); /* BMP file with header */
     XSetSelectionOwner(dpy, a_clip, win, CurrentTime);
@@ -266,8 +269,13 @@ static void handle_selreq(XSelectionRequestEvent *r)
     n.selection = r->selection; n.target = r->target; n.time = r->time; n.property = None;
     Atom prop = r->property ? r->property : r->target;
     if (r->target == a_targets) {
-        Atom t[3] = { a_targets, a_png, a_bmp };
-        XChangeProperty(dpy, r->requestor, prop, XA_ATOM, 32, PropModeReplace, (unsigned char *)t, 3);
+        Atom t[5]; int nt = 0; t[nt++] = a_targets;
+        if (clip_txt) { t[nt++] = a_utf8; t[nt++] = a_target_str; }
+        if (clip_png) { t[nt++] = a_png; t[nt++] = a_bmp; }
+        XChangeProperty(dpy, r->requestor, prop, XA_ATOM, 32, PropModeReplace, (unsigned char *)t, nt);
+        n.property = prop;
+    } else if (clip_txt && (r->target == a_utf8 || r->target == a_target_str)) {
+        XChangeProperty(dpy, r->requestor, prop, r->target, 8, PropModeReplace, (unsigned char *)clip_txt, (int)strlen(clip_txt));
         n.property = prop;
     } else if (r->target == a_png && clip_png) {
         XChangeProperty(dpy, r->requestor, prop, a_png, 8, PropModeReplace, clip_png, (int)clip_png_n);
@@ -277,6 +285,44 @@ static void handle_selreq(XSelectionRequestEvent *r)
         n.property = prop;
     }
     XSendEvent(dpy, r->requestor, False, 0, (XEvent *)&n);
+}
+void plat_clip_set_text(const char *utf8)
+{
+    free(clip_txt); clip_txt = strdup(utf8 ? utf8 : "");
+    free(clip_png); free(clip_bmp); clip_png = clip_bmp = NULL;
+    XSetSelectionOwner(dpy, a_clip, win, CurrentTime);
+}
+char *plat_clip_get_text(void)
+{
+    Window owner = XGetSelectionOwner(dpy, a_clip);
+    if (owner == None) return NULL;
+    if (owner == win) return clip_txt ? strdup(clip_txt) : NULL;
+    Atom want[2] = { a_utf8, a_target_str };
+    for (int t = 0; t < 2; t++) {
+        XDeleteProperty(dpy, win, a_prop);
+        XConvertSelection(dpy, a_clip, want[t], a_prop, win, CurrentTime);
+        XFlush(dpy);
+        uint32_t t0 = plat_ticks_ms();
+        while (plat_ticks_ms() - t0 < 800) {
+            while (XPending(dpy)) {
+                XEvent e; XNextEvent(dpy, &e);
+                if (e.type == SelectionRequest) handle_selreq(&e.xselectionrequest);
+                if (e.type == SelectionNotify) {
+                    if (e.xselection.property == None) goto next;
+                    Atom type; int fmt; unsigned long n, after; unsigned char *data = NULL;
+                    XGetWindowProperty(dpy, win, a_prop, 0, 0x7fffffff, True, AnyPropertyType, &type, &fmt, &n, &after, &data);
+                    char *res = NULL;
+                    if (data && n) { res = (char *)malloc(n + 1); memcpy(res, data, n); res[n] = 0; }
+                    if (data) XFree(data);
+                    if (res) return res;
+                    goto next;
+                }
+            }
+            usleep(5000);
+        }
+    next:;
+    }
+    return NULL;
 }
 uint32_t *plat_clip_get_image(int *w, int *h)
 {
@@ -560,3 +606,69 @@ const char *plat_home_dir(void)
     return pw ? pw->pw_dir : "/";
 }
 int plat_getcwd(char *buf, int n) { return getcwd(buf, n) ? 0 : -1; }
+
+
+/* ---------- native file dialog (kdialog on KDE, zenity elsewhere; no shell involved, arguments are passed directly) ---------- */
+static int which_exe(const char *name, char *out, size_t n)
+{
+    const char *p = getenv("PATH"); if (!p) p = "/usr/bin:/bin";
+    while (*p) {
+        size_t k = strcspn(p, ":"); char tmp[1024];
+        if (k && k < 900) { snprintf(tmp, sizeof tmp, "%.*s/%s", (int)k, p, name); if (access(tmp, X_OK) == 0) { snprintf(out, n, "%s", tmp); return 1; } }
+        p += k; if (*p == ':') p++;
+    }
+    return 0;
+}
+/* runs argv, captures stdout (first line). returns exit status, or -1 if it could not run */
+static int run_capture(char *const argv[], char *out, int outn)
+{
+    int fd[2]; if (pipe(fd)) return -1;
+    pid_t pid = fork();
+    if (pid < 0) { close(fd[0]); close(fd[1]); return -1; }
+    if (!pid) {
+        close(fd[0]); dup2(fd[1], 1); close(fd[1]);
+        int nul = open("/dev/null", O_WRONLY); if (nul >= 0) { dup2(nul, 2); close(nul); }
+        execv(argv[0], argv); _exit(127);
+    }
+    close(fd[1]);
+    int n = 0, r;
+    while (n < outn - 1 && (r = (int)read(fd[0], out + n, (size_t)(outn - 1 - n))) > 0) n += r;
+    out[n] = 0; close(fd[0]);
+    int st = 0; waitpid(pid, &st, 0);
+    char *nl = strchr(out, '\n'); if (nl) *nl = 0;
+    return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+}
+int plat_file_dialog(int save, const char *title, char *path, int pathn, const char *const *names, const char *const *pats, int nfilters, int *fidx)
+{
+    if ((getenv("PAINT_SCRIPT") && !getenv("SMPAINT_FORCE_NATIVE")) || getenv("SMPAINT_BUILTIN_DIALOG")) return -1;
+    const char *de = getenv("XDG_CURRENT_DESKTOP"); int kde = de && strstr(de, "KDE");
+    char exe[1024], filt[4096] = "", res[2048] = "";
+    char *av[64]; int ac = 0, st = -1, usedk = 0;
+    if (kde && which_exe("kdialog", exe, sizeof exe)) {
+        usedk = 1;
+        /* "*.jpg *.jpeg|JPEG" entries, one per line */
+        for (int i = 0; i < nfilters; i++) {
+            char p[256]; snprintf(p, sizeof p, "%s", pats[i]); for (char *c = p; *c; c++) if (*c == ';') *c = ' ';
+            size_t l = strlen(filt); snprintf(filt + l, sizeof filt - l, "%s%s|%s", i ? "\n" : "", p, names[i]);
+        }
+        av[ac++] = exe; av[ac++] = "--title"; av[ac++] = (char *)title;
+        av[ac++] = save ? "--getsavefilename" : "--getopenfilename"; av[ac++] = path; av[ac++] = filt; av[ac] = NULL;
+        st = run_capture(av, res, sizeof res);
+    } else if (which_exe("zenity", exe, sizeof exe)) {
+        char fa[8][512]; int nf = nfilters < 8 ? nfilters : 8;
+        av[ac++] = exe; av[ac++] = "--file-selection"; av[ac++] = "--title"; av[ac++] = (char *)title;
+        if (save) { av[ac++] = "--save"; av[ac++] = "--confirm-overwrite"; }
+        av[ac++] = "--filename"; av[ac++] = path;
+        for (int i = 0; i < nf; i++) {
+            char p[256]; snprintf(p, sizeof p, "%s", pats[i]); for (char *c = p; *c; c++) if (*c == ';') *c = ' ';
+            snprintf(fa[i], sizeof fa[i], "--file-filter=%s | %s", names[i], p); av[ac++] = fa[i];
+        }
+        av[ac] = NULL;
+        st = run_capture(av, res, sizeof res);
+    } else return -1;
+    (void)usedk;
+    if (st == 1 || (st == 0 && !res[0])) return 0;      /* cancelled */
+    if (st != 0) return -1;                             /* tool failed: use the built-in dialog */
+    snprintf(path, (size_t)pathn, "%s", res); *fidx = -1;
+    return 1;
+}

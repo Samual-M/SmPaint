@@ -59,14 +59,36 @@ const char *tool_cursor_for(int ix, int iy, int *idx)
 }
 
 /* ---------------- undo / redo ---------------- */
+static TextBox tb_dup(const TextBox *s)
+{
+    TextBox d = *s; size_t n = (size_t)s->len;
+    d.text = (char *)malloc(n + 1); d.st = (TStyle *)malloc(sizeof(TStyle) * (n + 1));
+    if (n) { memcpy(d.text, s->text, n); memcpy(d.st, s->st, sizeof(TStyle) * n); }
+    d.text[n] = 0; d.cap = (int)n + 1; return d;
+}
+static TList tl_clone(const TList *l)
+{
+    TList c; c.n = l->n; c.o = l->n ? (TextBox *)malloc(sizeof(TextBox) * (size_t)l->n) : NULL;
+    for (int i = 0; i < l->n; i++) c.o[i] = tb_dup(&l->o[i]);
+    return c;
+}
+static void tl_free(TList *l) { for (int i = 0; i < l->n; i++) { free(l->o[i].text); free(l->o[i].st); } free(l->o); l->o = NULL; l->n = 0; }
+static void tl_add(TList *l, TextBox o) { l->o = (TextBox *)realloc(l->o, sizeof(TextBox) * (size_t)(l->n + 1)); l->o[l->n++] = o; }
+static void undo_forget_all(void)
+{
+    for (int i = 0; i < A.nundo; i++) { img_free(A.undo[i]); tl_free(&A.tundo[i]); }
+    for (int i = 0; i < A.nredo; i++) { img_free(A.redo[i]); tl_free(&A.tredo[i]); }
+    A.nundo = A.nredo = 0; tl_free(&A.tl);
+}
 void undo_push(void)
 {
-    if (A.nundo == 3) { img_free(A.undo[0]); A.undo[0] = A.undo[1]; A.undo[1] = A.undo[2]; A.nundo = 2; }
+    if (A.nundo == 3) { img_free(A.undo[0]); tl_free(&A.tundo[0]); A.undo[0] = A.undo[1]; A.undo[1] = A.undo[2]; A.tundo[0] = A.tundo[1]; A.tundo[1] = A.tundo[2]; A.nundo = 2; }
+    A.tundo[A.nundo] = tl_clone(&A.tl);
     A.undo[A.nundo++] = img_clone(A.img);
-    for (int i = 0; i < A.nredo; i++) img_free(A.redo[i]);
+    for (int i = 0; i < A.nredo; i++) { img_free(A.redo[i]); tl_free(&A.tredo[i]); }
     A.nredo = 0; A.dirty = 1;
 }
-static void undo_drop_last(void) { if (A.nundo) img_free(A.undo[--A.nundo]); }
+static void undo_drop_last(void) { if (A.nundo) { --A.nundo; img_free(A.undo[A.nundo]); tl_free(&A.tundo[A.nundo]); } }
 void sel_cancel(void)
 {
     img_free(A.sel.pix); free(A.sel.mask); free(A.sel.free_pts);
@@ -78,9 +100,9 @@ void do_undo(void)
     if (A.tb.active) { free(A.tb.text); free(A.tb.st); memset(&A.tb, 0, sizeof A.tb); strcpy(A.tb.font, "Arial"); A.tb.size = 14; A.tb.sel = -1; }
     if (A.sel.active) sel_cancel();
     if (!A.nundo) return;
-    if (A.nredo == 3) { img_free(A.redo[0]); A.redo[0] = A.redo[1]; A.redo[1] = A.redo[2]; A.nredo = 2; }
-    A.redo[A.nredo++] = A.img;
-    A.img = A.undo[--A.nundo];
+    if (A.nredo == 3) { img_free(A.redo[0]); tl_free(&A.tredo[0]); A.redo[0] = A.redo[1]; A.redo[1] = A.redo[2]; A.tredo[0] = A.tredo[1]; A.tredo[1] = A.tredo[2]; A.nredo = 2; }
+    A.tredo[A.nredo] = A.tl; A.redo[A.nredo++] = A.img;
+    A.img = A.undo[--A.nundo]; A.tl = A.tundo[A.nundo];
     A.dirty = 1; view_clamp();
 }
 void do_redo(void)
@@ -88,9 +110,9 @@ void do_redo(void)
     tool_cancel();
     if (A.sel.active) sel_cancel();
     if (!A.nredo) return;
-    if (A.nundo == 3) { img_free(A.undo[0]); A.undo[0] = A.undo[1]; A.undo[1] = A.undo[2]; A.nundo = 2; }
-    A.undo[A.nundo++] = A.img;
-    A.img = A.redo[--A.nredo];
+    if (A.nundo == 3) { img_free(A.undo[0]); tl_free(&A.tundo[0]); A.undo[0] = A.undo[1]; A.undo[1] = A.undo[2]; A.tundo[0] = A.tundo[1]; A.tundo[1] = A.tundo[2]; A.nundo = 2; }
+    A.tundo[A.nundo] = A.tl; A.undo[A.nundo++] = A.img;
+    A.img = A.redo[--A.nredo]; A.tl = A.tredo[A.nredo];
     A.dirty = 1; view_clamp();
 }
 
@@ -248,7 +270,8 @@ static void text_blit(Img *dst)
 {
     TextBox *t = &A.tb;
     if (!t->active) return;
-    if (!A.o_trans) for (int j = 0; j < t->h; j++) for (int i = 0; i < t->w; i++) img_put(dst, t->x + i, t->y + j, A.bg);
+    px_t fgc = t->frozen ? t->fg : A.fg, bgc = t->frozen ? t->bg : A.bg; int trans = t->frozen ? t->trans : A.o_trans;
+    if (!trans) for (int j = 0; j < t->h; j++) for (int i = 0; i < t->w; i++) img_put(dst, t->x + i, t->y + j, bgc);
     if (!t->len) return;
     char *wr = text_wrapped(); int nl; TLine *L = tlayout(wr, &nl); int y = 0;
     for (int li = 0; li < nl; li++) {
@@ -263,7 +286,7 @@ static void text_blit(Img *dst)
             if (m) {
                 int oy = y + l->asc - asc_of(th);
                 for (int j = 0; j < th; j++) for (int i = 0; i < tw; i++)
-                    if (m[j * tw + i] && x + i < t->w && oy + j < t->h && oy + j >= 0) img_put(dst, t->x + x + i, t->y + oy + j, A.fg);
+                    if (m[j * tw + i] && x + i < t->w && oy + j < t->h && oy + j >= 0) img_put(dst, t->x + x + i, t->y + oy + j, fgc);
                 free(m);
             }
             x += tw; a = b;
@@ -276,13 +299,48 @@ void text_commit(void)
 {
     TextBox *t = &A.tb;
     if (!t->active) return;
-    if (t->len) { undo_push(); text_blit(A.img); }
-    free(t->text); free(t->st);
     char font[64]; int sz = t->size, b = t->bold, it = t->italic, u = t->underline;
     strcpy(font, t->font);
+    if (t->len) {                                  /* the box stays a live object: it can be moved/edited later */
+        if (!t->from_obj) undo_push();
+        TextBox o = *t; o.active = 1; o.frozen = 1; o.from_obj = 0; o.fg = A.fg; o.bg = A.bg; o.trans = A.o_trans; o.sel = -1;
+        tl_add(&A.tl, o);
+    } else { free(t->text); free(t->st); }
     memset(t, 0, sizeof *t);
     strcpy(t->font, font); t->size = sz; t->bold = b; t->italic = it; t->underline = u; t->sel = -1;
+    A.dirty = 1;
 }
+static void blit_objects(Img *dst)
+{
+    for (int i = 0; i < A.tl.n; i++) { TextBox save = A.tb; A.tb = A.tl.o[i]; A.tb.active = 1; text_blit(dst); A.tb = save; }
+}
+/* burn the finished text boxes into the picture (called before anything else edits the picture) */
+void app_bake_text(void)
+{
+    if (A.tb.active) text_commit();
+    if (!A.tl.n) return;
+    blit_objects(A.img); tl_free(&A.tl); A.dirty = 1;
+}
+Img *app_flat_image(int *owned)
+{
+    if (!A.tl.n) { *owned = 0; return A.img; }
+    Img *c = img_clone(A.img); blit_objects(c); *owned = 1; return c;
+}
+static int tb_activate_at(int ix, int iy)          /* re-open the topmost finished box under the point */
+{
+    for (int i = A.tl.n - 1; i >= 0; i--) {
+        TextBox *o = &A.tl.o[i];
+        if (ix < o->x - 2 || iy < o->y - 2 || ix >= o->x + o->w + 2 || iy >= o->y + o->h + 2) continue;
+        undo_push();                                // pre-edit state (box present) is the undo target
+        o = &A.tl.o[i];
+        TextBox n = *o; memmove(o, o + 1, sizeof(TextBox) * (size_t)(A.tl.n - i - 1)); A.tl.n--;
+        A.tb = n; A.tb.active = 1; A.tb.frozen = 0; A.tb.from_obj = 1; A.tb.sel = -1; A.tb.minw = n.w; A.tb.minh = n.h;
+        A.fg = n.fg; A.bg = n.bg; A.o_trans = n.trans;
+        return 1;
+    }
+    return 0;
+}
+
 /* grow the box so all text fits (wraps only at the image's right edge) */
 void text_autogrow(void)
 {
@@ -505,6 +563,7 @@ static void clamp_pt(int *x, int *y) { if (*x < 0) *x = 0; if (*y < 0) *y = 0; i
 void tool_press(int ix, int iy, int btn, int mods)
 {
     if (btn != BTN_LEFT && btn != BTN_RIGHT) return;
+    if (A.tool != T_TEXT && A.tool != T_MAG && !D.active) app_bake_text();   /* finished text boxes become part of the picture */
     if (D.active) { /* second button while dragging: cancel */
         if (D.tool >= T_LINE && D.tool != T_CURVE && D.tool != T_POLY) { restore_base(); undo_drop_last(); D.active = 0; D.base = NULL; }
         else if (D.tool == T_PENCIL || D.tool == T_BRUSH || D.tool == T_ERASER || D.tool == T_AIR) { D.active = 0; }
@@ -548,6 +607,8 @@ void tool_press(int ix, int iy, int btn, int mods)
         break;
     case T_TEXT: {
         TextBox *t = &A.tb;
+        if (t->active && tb_hit(ix, iy) == 0) text_commit();
+        if (!t->active) tb_activate_at(ix, iy);
         if (t->active) {
             int h = tb_hit(ix, iy);
             if (h == 2) { D.active = 1; D.mode = 10; D.off = (Pt){ ix - t->x, iy - t->y }; break; }
@@ -561,7 +622,6 @@ void tool_press(int ix, int iy, int btn, int mods)
                 last_t = now; last_x = ix; last_y = iy;
                 t->caret = idx; t->sel = idx; tb_sync_style(); D.active = 1; D.mode = 12; break;
             }
-            text_commit();
         }
         if (!t->font[0]) { strcpy(t->font, "Arial"); t->size = 14; }
         D.active = 1; D.mode = 3; break;
@@ -769,9 +829,10 @@ int tool_key(const PEvent *ev)
 /* ---------------- composition & overlays ---------------- */
 Img *build_comp(int *owned)
 {
-    int need = (A.sel.active && A.sel.lifted) || A.tb.active;
+    int need = (A.sel.active && A.sel.lifted) || A.tb.active || A.tl.n;
     if (!need) { *owned = 0; return A.img; }
     Img *c = img_clone(A.img);
+    blit_objects(c);
     if (A.sel.active && A.sel.lifted) sel_blit(c, &A.sel, A.o_trans);
     if (A.tb.active) text_blit(c);
     *owned = 1;
@@ -890,9 +951,8 @@ void app_new_image(int w, int h)
     if (A.tb.active) { free(A.tb.text); free(A.tb.st); A.tb.text = NULL; A.tb.st = NULL; A.tb.active = 0; A.tb.len = A.tb.cap = A.tb.caret = 0; A.tb.sel = -1; }
     img_free(A.img);
     A.img = img_new(w, h, RGB(255, 255, 255));
-    for (int i = 0; i < A.nundo; i++) img_free(A.undo[i]);
-    for (int i = 0; i < A.nredo; i++) img_free(A.redo[i]);
-    A.nundo = A.nredo = 0; A.path[0] = 0; A.dirty = 0; A.sx = A.sy = 0; A.bw = 0;
+    undo_forget_all();
+    A.path[0] = 0; A.dirty = 0; A.sx = A.sy = 0; A.bw = 0;
     ui_relayout(); update_title();
 }
 void set_canvas_size(int w, int h)
@@ -900,7 +960,7 @@ void set_canvas_size(int w, int h)
     if (w < 1) w = 1; if (h < 1) h = 1;
     if (w > 10000) w = 10000; if (h > 10000) h = 10000;
     if (w == A.img->w && h == A.img->h) return;
-    sel_commit();
+    sel_commit(); app_bake_text();
     undo_push();
     Img *n = cv_crop_resize(A.img, w, h, A.bg);
     img_free(A.img); A.img = n;
@@ -919,7 +979,8 @@ void app_init(void)
     A.fg = RGB(0, 0, 0); A.bg = RGB(255, 255, 255);
     A.tool = T_PENCIL; A.prevtool = T_PENCIL;
     A.zp = 85; A.show_toolbox = A.show_colorbox = A.show_status = 1; A.show_text = 1;
-    A.o_eraser = 2; A.o_brush = 5; A.o_air = 1; A.o_line = 0; A.o_shapew = 0; A.o_fill = 0; A.o_mag = 1; A.o_trans = 0;
+    /* middle option of each size panel (even counts round up) */
+    A.o_eraser = 2; A.o_brush = 6; A.o_air = 1; A.o_line = 2; A.o_shapew = 3; A.o_fill = 0; A.o_mag = 1; A.o_trans = 0;
     A.grid_w = A.grid_h = 8; A.dpi = 96;
     strcpy(A.tb.font, "Arial"); A.tb.size = 14; A.tb.sel = -1;
     A.img = img_new(DEF_W, DEF_H, RGB(255, 255, 255));
@@ -974,9 +1035,8 @@ void app_load_file(const char *path)
     tool_cancel(); sel_cancel();
     if (A.tb.active) { free(A.tb.text); free(A.tb.st); A.tb.text = NULL; A.tb.st = NULL; A.tb.active = 0; A.tb.len = A.tb.cap = A.tb.caret = 0; A.tb.sel = -1; }
     img_free(A.img); A.img = im;
-    for (int i = 0; i < A.nundo; i++) img_free(A.undo[i]);
-    for (int i = 0; i < A.nredo; i++) img_free(A.redo[i]);
-    A.nundo = A.nredo = 0; strncpy(A.path, path, 1023); A.dirty = 0; A.sx = A.sy = 0; A.bw = 0;
+    undo_forget_all();
+    strncpy(A.path, path, 1023); A.dirty = 0; A.sx = A.sy = 0; A.bw = 0;
     add_recent(path);
     ui_relayout(); zoom_fit_image(); update_title();
 }
@@ -1206,9 +1266,56 @@ static int vb_event(Modal *m, const PEvent *ev)
 }
 static void app_paint_stub(void) {}
 
+/* ---- text box clipboard ---- */
+static char *g_ctxt; static TStyle *g_cst; static int g_cn;        /* our own copy, keeps per-character styles */
+int text_has_sel(void) { int a, b; return A.tb.active && tb_sel_range(&a, &b); }
+static void text_do_copy(int cut)
+{
+    TextBox *t = &A.tb; int a, b;
+    if (!tb_sel_range(&a, &b)) return;
+    int n = b - a;
+    free(g_ctxt); free(g_cst);
+    g_ctxt = (char *)malloc((size_t)n + 1); g_cst = (TStyle *)malloc(sizeof(TStyle) * (size_t)n);
+    memcpy(g_ctxt, t->text + a, (size_t)n); g_ctxt[n] = 0; memcpy(g_cst, t->st + a, sizeof(TStyle) * (size_t)n); g_cn = n;
+    plat_clip_set_text(g_ctxt);
+    if (cut) { tb_splice(a, b, "", 0); tb_sync_style(); text_autogrow(); }
+}
+static void text_do_paste(void)
+{
+    char *s = plat_clip_get_text();
+    if (!s || !*s) { free(s); return; }
+    char *o = (char *)malloc(strlen(s) + 1); size_t n = 0;
+    for (char *p = s; *p; p++) { if (*p == '\r') { if (p[1] != '\n') o[n++] = '\n'; } else o[n++] = *p; }
+    o[n] = 0; if (n > 100000) { n = 100000; o[n] = 0; }
+    int same = g_ctxt && g_cn == (int)n && !memcmp(g_ctxt, o, n);      /* pasting our own text: keep its styles */
+    int a, b; TextBox *t = &A.tb;
+    if (!tb_sel_range(&a, &b)) a = b = t->caret;
+    tb_splice(a, b, o, (int)n);
+    if (same) for (int i = 0; i < (int)n; i++) t->st[a + i] = g_cst[i];
+    tb_sync_style(); text_autogrow();
+    free(s); free(o);
+}
+int text_edit_cmd(int id)       /* Edit menu / Ctrl+C,X,V while a text box is open; returns 1 when handled */
+{
+    if (!A.tb.active) return 0;
+    if (id == CMD_COPY) { text_do_copy(0); return 1; }
+    if (id == CMD_CUT) { text_do_copy(1); return 1; }
+    if (id == CMD_PASTE) { text_do_paste(); return 1; }
+    if (id == CMD_SELECTALL) { text_select_all(); return 1; }
+    if (id == CMD_CLEARSEL) { free(A.tb.text); free(A.tb.st); A.tb.text = NULL; A.tb.st = NULL; A.tb.len = A.tb.caret = A.tb.cap = 0; A.tb.active = 0; A.tb.sel = -1; A.tb.from_obj = 0; return 1; }
+    return 0;
+}
+
 int cmd_exec(int id)
 {
     (void)app_paint_stub;
+    if (text_edit_cmd(id)) return 0;
+    switch (id) {            /* everything not listed here edits the picture, so finished text boxes are baked in first */
+    case CMD_NEW: case CMD_OPEN: case CMD_SAVE: case CMD_SAVEAS: case CMD_UNDO: case CMD_REPEAT: case CMD_TOOLBOX: case CMD_COLORBOX:
+    case CMD_STATUSBAR: case CMD_TEXTBAR: case CMD_ZOOM_NORMAL: case CMD_ZOOM_LARGE: case CMD_ZOOM_CUSTOM: case CMD_ZOOMIN: case CMD_GRID:
+    case CMD_THUMB: case CMD_VIEWBITMAP: case CMD_HELP: case CMD_ABOUT: case CMD_EXIT: case CMD_EDITCOLORS: case CMD_PAGESETUP: break;
+    default: app_bake_text();
+    }
     switch (id) {
     case CMD_NEW: if (app_confirm_discard()) { app_new_image(DEF_W, DEF_H); } break;
     case CMD_OPEN: {
@@ -1221,7 +1328,7 @@ int cmd_exec(int id)
         if (A.tb.active) text_commit();
         sel_commit();
         if (!A.path[0]) return cmd_exec(CMD_SAVEAS);
-        if (save_image(A.path, A.img, -1)) { A.dirty = 0; update_title(); }
+        { int ow; Img *f = app_flat_image(&ow); int ok = save_image(A.path, f, -1); if (ow) img_free(f); if (ok) { A.dirty = 0; update_title(); } }
         break;
     case CMD_SAVEAS: {
         if (A.tb.active) text_commit();
@@ -1233,7 +1340,7 @@ int cmd_exec(int id)
             const char *dot = strrchr(p, '.');
             if (dot && !str_icmp(dot, ".gif") && msgbox("SmPaint", str_res(2297), MB_YESNO, 0) != ID_YES) break;
             int flt = g_file_filter;
-            if (save_image(p, A.img, flt)) { strncpy(A.path, p, 1023); A.dirty = 0; add_recent(p); update_title(); }
+            { int ow; Img *f = app_flat_image(&ow); int ok = save_image(p, f, flt); if (ow) img_free(f); if (ok) { strncpy(A.path, p, 1023); A.dirty = 0; add_recent(p); update_title(); } }
         }
         break;
     }

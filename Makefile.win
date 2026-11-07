@@ -16,7 +16,7 @@ WINDRES ?= $(T)-windres
 CFLAGS ?= -O2 -std=gnu99 -Wall -Wextra -Wno-unused-parameter -Wno-misleading-indentation
 CFLAGS += -DPAINT_WIN_GUI -D__USE_MINGW_ANSI_STDIO=1 -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -DUNICODE -D_UNICODE
 LDFLAGS ?= -mwindows -static -s
-LIBS = -lgdi32 -luser32 -lshell32 -lole32 -lm
+LIBS = -lgdi32 -luser32 -lshell32 -lole32 -lcomdlg32 -lm
 SRC = src/ui_main.c src/tools.c src/canvas.c src/ui.c src/gfx.c src/imgio.c src/jpeg.c src/resdata.c src/font_data.c src/plat_win32.c
 OUT = build/mspaint-$(ARCH).exe
 

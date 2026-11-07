@@ -945,9 +945,51 @@ static int fd_event(Modal *m, const PEvent *ev)
     }
     return 1;
 }
+static char lastdir[1024];
+static int native_file_dialog(int save, const char *title, char *path, int pathn, int filter_mode)
+{
+    /* the desktop's own dialog; save offers the useful types (bit-depth BMP variants collapse into 24-bit BMP) */
+    static const int smap[5] = { 4, 6, 7, 3, 5 };                 /* JPEG, PNG, PDF, BMP, GIF -> save_filters index */
+    const char *names[8], *pats[8]; static char pbuf[8][96]; int map[8], n = 0;
+    const Filter *src = save ? save_filters : open_filters; int cnt = save ? 5 : 6;
+    for (int i = 0; i < cnt; i++) {
+        int si = save ? smap[i] : i; map[n] = si;
+        names[n] = save ? (si == 3 ? "Bitmap (*.bmp;*.dib)" : src[si].name) : src[si].name;
+        const char *e = src[si].exts; char *o = pbuf[n]; *o = 0;
+        if (!strcmp(e, "*")) strcpy(o, "*");
+        else { while (*e) { size_t k = strcspn(e, ";"); o += snprintf(o, 96 - (size_t)(o - pbuf[n]), "%s*.%.*s", o == pbuf[n] ? "" : ";", (int)k, e); e += k; if (*e == ';') e++; } }
+        pats[n] = pbuf[n]; n++;
+    }
+    char p[1100]; const char *name = "";
+    if (path && *path) { snprintf(p, sizeof p, "%s", path); }
+    else { snprintf(p, sizeof p, "%s/", lastdir[0] ? lastdir : plat_home_dir()); }
+    (void)name;
+    if (!strchr(p, PATH_SEP) ) { char t[1100]; snprintf(t, sizeof t, "%s/%s", lastdir[0] ? lastdir : plat_home_dir(), p); snprintf(p, sizeof p, "%s", t); }
+    int fi = 0; for (int i = 0; i < n; i++) if (map[i] == filter_mode) fi = i;
+    int r = plat_file_dialog(save, title, p, (int)sizeof p, names, pats, n, &fi);
+    if (r <= 0) return r;
+    char *sl = strrchr(p, PATH_SEP); if (sl) { size_t d = (size_t)(sl - p); if (d > 1023) d = 1023; memcpy(lastdir, p, d ? d : 1); lastdir[d ? d : 1] = 0; }
+    int ext_given = strrchr(p, '.') && (!sl || strrchr(p, '.') > sl);
+    int flt = filter_mode;
+    if (save) {
+        if (ext_given) {
+            const char *d = strrchr(p, '.') + 1;
+            if (!str_icmp(d, "jpg") || !str_icmp(d, "jpeg") || !str_icmp(d, "jpe") || !str_icmp(d, "jfif")) flt = 4;
+            else if (!str_icmp(d, "png")) flt = 6; else if (!str_icmp(d, "gif")) flt = 5; else if (!str_icmp(d, "pdf")) flt = 7;
+            else if (!str_icmp(d, "bmp") || !str_icmp(d, "dib")) flt = 3;
+        } else {
+            if (fi >= 0 && fi < n) flt = map[fi];
+            size_t l = strlen(p); const char *e = flt == 6 ? ".png" : flt == 5 ? ".gif" : flt == 7 ? ".pdf" : flt == 3 ? ".bmp" : ".jpg";
+            if (l + 5 < sizeof p) strcat(p, e);
+        }
+        g_file_filter = flt;
+    }
+    strncpy(path, p, (size_t)pathn - 1); path[pathn - 1] = 0;
+    return 1;
+}
 int file_dialog(int save, const char *title, char *path, int pathn, int filter_mode)
 {
-    static char lastdir[1024];
+    { int nr = native_file_dialog(save, title, path, pathn, filter_mode); if (nr >= 0) return nr; }
     FileD *f = (FileD *)calloc(1, sizeof(FileD));
     f->save = save; strncpy(f->title, title, 31);
     f->filters = save ? save_filters : open_filters; f->nfilters = save ? 8 : 6;
