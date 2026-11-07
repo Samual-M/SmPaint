@@ -119,7 +119,7 @@ void sel_cancel(void)
 void do_undo(void)
 {
     tool_cancel();
-    if (A.tb.active) { free(A.tb.text); free(A.tb.st); memset(&A.tb, 0, sizeof A.tb); strcpy(A.tb.font, "Arial"); A.tb.size = 14; A.tb.sel = -1; }
+    if (A.tb.active) { free(A.tb.text); free(A.tb.st); memset(&A.tb, 0, sizeof A.tb); strcpy(A.tb.font, "Arial"); A.tb.size = 10; A.tb.sel = -1; }
     if (A.sel.active) sel_cancel();
     if (!A.nundo) return;
     if (A.nredo == 3) { img_free(A.redo[0]); tl_free(&A.tredo[0]); sl_free(&A.sredo[0]); A.redo[0] = A.redo[1]; A.redo[1] = A.redo[2]; A.tredo[0] = A.tredo[1]; A.tredo[1] = A.tredo[2]; A.sredo[0] = A.sredo[1]; A.sredo[1] = A.sredo[2]; A.nredo = 2; }
@@ -210,7 +210,8 @@ static int auto_tscale(void)
     if (s < 1.0) s = 1.0; if (s > 8.0) s = 8.0;
     return (int)(s * 1000.0 + 0.5);
 }
-static int pt_to_px(int pt) { int k = A.tb.tscale > 0 ? A.tb.tscale : 1000; return (int)(((long long)pt * 96 * k + 36000) / 72000); }
+/* the size numbers are scaled down so that "26" draws as an old-style 10pt (factor 10/26) */
+static int pt_to_px(int pt) { int k = A.tb.tscale > 0 ? A.tb.tscale : 1000; int px = (int)(((long long)pt * 96 * k * 10 + 936000) / 1872000); return px < 3 ? 3 : px; }
 static int text_px(void) { return pt_to_px(A.tb.size); }
 static TStyle cur_style(void)
 {
@@ -647,7 +648,7 @@ static int text_press(int ix, int iy, int allow_new)
         }
     }
     if (!allow_new) return 0;
-    if (!t->font[0]) { strcpy(t->font, "Arial"); t->size = 14; }
+    if (!t->font[0]) { strcpy(t->font, "Arial"); t->size = 10; }
     D.active = 1; D.mode = 3; return 1;
 }
 
@@ -1212,7 +1213,7 @@ void app_init(void)
     /* middle option of each size panel (even counts round up) */
     A.o_eraser = 2; A.o_brush = 6; A.o_air = 1; A.o_line = 2; A.o_shapew = 3; A.o_fill = 0; A.o_mag = 1; A.o_trans = 0;
     A.grid_w = A.grid_h = 8; A.dpi = 96;
-    strcpy(A.tb.font, "Arial"); A.tb.size = 14; A.tb.sel = -1;
+    strcpy(A.tb.font, "Arial"); A.tb.size = 10; A.tb.sel = -1;
     A.img = img_new(DEF_W, DEF_H, RGB(255, 255, 255));
 }
 int app_confirm_discard(void)
