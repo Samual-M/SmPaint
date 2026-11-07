@@ -57,6 +57,18 @@ typedef struct {
     double delta_x, delta_y, delta_unaccel_x, delta_unaccel_y, scale, delta_angle;
 } XIPinch_;
 static int xi_opcode = -1;
+/* The hand-declared struct above can differ from libXi's real XIGesturePinchEvent layout, so find 'scale' by checking both
+   plausible positions: the real layout puts scale after the four delta doubles that follow event_y; Begin always reports 1.0. */
+static int pinch_layout = -1;                      /* -1 unknown, 0 = deltas first, 1 = flags/mods/group first */
+static double pinch_scale(const XIPinch_ *p, int evtype)
+{
+    const double *d = &p->event_y + 1;             /* first double after event_y */
+    double a = d[4];                               /* layout 0: delta_x delta_y delta_unaccel_x delta_unaccel_y scale */
+    double b = p->scale;                           /* layout 1: declared struct */
+    if (pinch_layout < 0 && evtype == 27) pinch_layout = (a > 0.99 && a < 1.01) ? 0 : (b > 0.99 && b < 1.01) ? 1 : 0;
+    if (pinch_layout < 0) pinch_layout = 0;
+    return pinch_layout == 0 ? a : b;
+}
 static void xi_init(void)
 {
     int ev, er;
@@ -76,8 +88,9 @@ static int pinch_event(XEvent *e, PEvent *out)
         int t = e->xcookie.evtype;
         if (t >= 27 && t <= 29) {
             const XIPinch_ *p = (const XIPinch_ *)e->xcookie.data;
-            double sc = p->scale;
+            double sc = pinch_scale(p, t);
             if (t == 27) sc = 1.0;
+            if (getenv("SMPAINT_DEBUG_PINCH")) fprintf(stderr, "pinch type=%d scale=%f layout=%d\n", t, sc, pinch_layout);
             if (t == 29 || (sc > 0.05 && sc < 20.0)) {
                 out->type = EV_PINCH; out->button = t - 26; out->key = (int)(sc * 1000.0);
                 out->x = (int)p->event_x; out->y = (int)p->event_y; ok = 1;
