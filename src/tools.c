@@ -76,6 +76,7 @@ static void tl_free(TList *l) { for (int i = 0; i < l->n; i++) { free(l->o[i].te
 static void tl_add(TList *l, TextBox o) { l->o = (TextBox *)realloc(l->o, sizeof(TextBox) * (size_t)(l->n + 1)); l->o[l->n++] = o; }
 static void undo_forget_all(void)
 {
+    img_free(A.shadow); A.shadow = NULL;
     for (int i = 0; i < A.nundo; i++) { img_free(A.undo[i]); tl_free(&A.tundo[i]); }
     for (int i = 0; i < A.nredo; i++) { img_free(A.redo[i]); tl_free(&A.tredo[i]); }
     A.nundo = A.nredo = 0; tl_free(&A.tl);
@@ -180,7 +181,15 @@ static int font_id(const char *n)
     if (g_nfonts < 32) { strncpy(g_fonts[g_nfonts], n, 63); g_fonts[g_nfonts][63] = 0; return g_nfonts++; }
     return 0;
 }
-static int pt_to_px(int pt) { return (pt * 96 + 36) / 72; }
+/* Text size follows the picture: on a picture bigger than 1920x1080 the same point size is scaled up, so text looks the
+   same relative to the picture whatever its resolution/aspect ratio (never scaled below 1x). Fixed per box. */
+static int auto_tscale(void)
+{
+    double s = sqrt((double)A.img->w * (double)A.img->h / (1920.0 * 1080.0));
+    if (s < 1.0) s = 1.0; if (s > 8.0) s = 8.0;
+    return (int)(s * 1000.0 + 0.5);
+}
+static int pt_to_px(int pt) { int k = A.tb.tscale > 0 ? A.tb.tscale : 1000; return (int)(((long long)pt * 96 * k + 36000) / 72000); }
 static int text_px(void) { return pt_to_px(A.tb.size); }
 static TStyle cur_style(void)
 {
@@ -202,6 +211,7 @@ static MCache mcache[1024];
 static uint64_t run_key(TStyle s, const char *p, int n)
 {
     uint64_t h = 1469598103934665603ull;
+    h = (h ^ (uint64_t)(A.tb.tscale > 0 ? A.tb.tscale : 1000)) * 1099511628211ull;
     h = (h ^ s.font) * 1099511628211ull; h = (h ^ s.size) * 1099511628211ull; h = (h ^ s.flags) * 1099511628211ull;
     for (int i = 0; i < n; i++) h = (h ^ (unsigned char)p[i]) * 1099511628211ull;
     return h | 1;
@@ -729,6 +739,7 @@ void tool_release(int ix, int iy, int mods)
         int x0 = D.start.x < ix ? D.start.x : ix, y0 = D.start.y < iy ? D.start.y : iy, x1 = D.start.x < ix ? ix : D.start.x, y1 = D.start.y < iy ? iy : D.start.y;
         TextBox *t = &A.tb; t->active = 1;
         t->x = x0; t->y = y0; t->w = x1 - x0 + 1; t->h = y1 - y0 + 1;
+        t->tscale = auto_tscale();
         int minh = text_px() + 6; if (t->h < minh) t->h = minh; if (t->w < 30) t->w = 30;
         t->minw = t->w; t->minh = t->h;
         t->len = 0; t->caret = 0; t->sel = -1; free(t->text); free(t->st); t->text = NULL; t->st = NULL; t->cap = 0;
@@ -962,7 +973,18 @@ void set_canvas_size(int w, int h)
     if (w == A.img->w && h == A.img->h) return;
     sel_commit(); app_bake_text();
     undo_push();
+    int ow = A.img->w, oh = A.img->h;
+    if (w < ow || h < oh) {                       /* remember what is being cut off so enlarging again restores it */
+        int sw = A.shadow && A.shadow->w > ow ? A.shadow->w : ow, shh = A.shadow && A.shadow->h > oh ? A.shadow->h : oh;
+        Img *ns = img_new(sw, shh, A.bg);
+        if (A.shadow) for (int y = 0; y < A.shadow->h; y++) memcpy(ns->p + (size_t)y * sw, A.shadow->p + (size_t)y * A.shadow->w, sizeof(px_t) * (size_t)A.shadow->w);
+        for (int y = 0; y < oh; y++) memcpy(ns->p + (size_t)y * sw, A.img->p + (size_t)y * ow, sizeof(px_t) * (size_t)ow);
+        img_free(A.shadow); A.shadow = ns;
+    }
     Img *n = cv_crop_resize(A.img, w, h, A.bg);
+    if (A.shadow && (w > ow || h > oh))
+        for (int y = 0; y < h && y < A.shadow->h; y++) for (int x = 0; x < w && x < A.shadow->w; x++)
+            if (x >= ow || y >= oh) n->p[(size_t)y * w + x] = A.shadow->p[(size_t)y * A.shadow->w + x];
     img_free(A.img); A.img = n;
     ui_relayout(); view_clamp();
 }
@@ -1316,6 +1338,7 @@ int cmd_exec(int id)
     case CMD_THUMB: case CMD_VIEWBITMAP: case CMD_HELP: case CMD_ABOUT: case CMD_EXIT: case CMD_EDITCOLORS: case CMD_PAGESETUP: case CMD_COPYIMG: break;
     default: app_bake_text();
     }
+    if (id == CMD_FLIPROT || id == CMD_STRETCH || id == CMD_INVERT || id == CMD_CLEARIMG) { img_free(A.shadow); A.shadow = NULL; }
     switch (id) {
     case CMD_NEW: if (app_confirm_discard()) { app_new_image(DEF_W, DEF_H); } break;
     case CMD_OPEN: {

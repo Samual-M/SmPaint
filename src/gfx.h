@@ -46,6 +46,7 @@ void gx_argb_recolor(Img *d, int x, int y, const uint32_t *src, int sw, int sh, 
 
 /* UI text (embedded bitmap font). '&' marks mnemonic if mnem != 0. Returns advance width. */
 int tx_width(const char *s, int bold, int mnem);
+int tx_big(int on);   /* switch to the larger UI text; returns the previous state */
 int tx_draw(Img *d, int x, int y, const char *s, px_t c, int bold, int mnem);
 int tx_draw_dis(Img *d, int x, int y, const char *s, int mnem); /* disabled look (embossed) */
 void tx_draw_clip(Img *d, int x, int y, const char *s, px_t c, int maxw); /* clipped to maxw px */

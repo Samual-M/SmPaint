@@ -1,5 +1,6 @@
 /* gfx.c - portable software rendering helpers */
 #include "gfx.h"
+#include "plat.h"
 #include "font.h"
 
 Img *img_new(int w, int h, px_t fill)
@@ -112,8 +113,36 @@ static int decode_utf8(const char **ps)
 static int glyph_index(int c) { return (c >= 32 && c < 256) ? c - 32 : ('?' - 32); }
 static int gw(int c, int bold) { return (bold ? font_bold_adv : font_reg_adv)[glyph_index(c)]; }
 
+/* ---- larger, clearer UI text for the menu bar, menus, status bar, text bar and drop-down lists ----
+   (dialogs keep the original bitmap font because their layouts are fixed-size) */
+static int g_big;
+int tx_big(int on) { int p = g_big; g_big = on; return p; }
+#define BIG_PX 13
+typedef struct { uint64_t key; uint8_t *m; int w, h; } BigGlyphs;
+static BigGlyphs big_cache[512];
+static void big_plain(const char *s, int mnem, char *out, int outn, int *ul_byte)
+{
+    int n = 0; *ul_byte = -1;
+    while (*s && n < outn - 1) {
+        if (mnem && *s == '&') { s++; if (*s == '&') { out[n++] = *s++; continue; } if (*s && *ul_byte < 0) *ul_byte = n; continue; }
+        if (*s == '\t') { s++; continue; }
+        out[n++] = *s++;
+    }
+    out[n] = 0;
+}
+static const BigGlyphs *big_get(const char *plain, int bold)
+{
+    uint64_t h = 1469598103934665603ull ^ (uint64_t)bold;
+    for (const char *p = plain; *p; p++) h = (h ^ (unsigned char)*p) * 1099511628211ull;
+    h |= 1; BigGlyphs *e = &big_cache[h & 511];
+    if (e->key == h) return e;
+    free(e->m); e->m = NULL; e->w = e->h = 0;
+    if (*plain) e->m = plat_render_text(plain, "Arial", BIG_PX, bold, 0, 0, &e->w, &e->h);
+    e->key = h; return e;
+}
 int tx_width(const char *s, int bold, int mnem)
 {
+    if (g_big) { char b[512]; int u; big_plain(s, mnem, b, sizeof b, &u); if (!*b) return 0; return big_get(b, bold)->w; }
     int w = 0;
     while (*s) {
         int c = decode_utf8(&s);
@@ -136,6 +165,21 @@ static void glyph(Img *d, int x, int y, int c, px_t col, int bold)
 /* y = top of the text line box (13px) */
 int tx_draw(Img *d, int x, int y, const char *s, px_t col, int bold, int mnem)
 {
+    if (g_big) {
+        char b[512]; int u; big_plain(s, mnem, b, sizeof b, &u);
+        if (!*b) return 0;
+        const BigGlyphs *e = big_get(b, bold);
+        if (!e->m) return 0;
+        int oy = y + (13 - e->h) / 2;
+        for (int j = 0; j < e->h; j++) for (int i = 0; i < e->w; i++) if (e->m[j * e->w + i]) img_put(d, x + i, oy + j, col);
+        if (u >= 0) {
+            char pre[512]; memcpy(pre, b, (size_t)u); pre[u] = 0;
+            int ux = x + (u ? big_get(pre, bold)->w : 0), cl = 1; while (((unsigned char)b[u + cl] & 0xc0) == 0x80) cl++;
+            char ch[8]; memcpy(ch, b + u, (size_t)cl); ch[cl] = 0;
+            gx_hline(d, ux, ux + big_get(ch, bold)->w - 1, oy + (e->h * 4 + 2) / 5 + 1, col);
+        }
+        return e->w;
+    }
     int x0 = x;
     while (*s) {
         int c = decode_utf8(&s);

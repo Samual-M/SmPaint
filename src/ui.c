@@ -177,7 +177,9 @@ typedef struct {
 } MenuRun;
 
 static int item_h(const MItem *m) { return m->type == 3 ? 9 : 18; }
-static void menu_size(const MenuDef *md, int *w, int *h)
+static void menu_size_impl(const MenuDef *md, int *w, int *h);
+static void menu_size(const MenuDef *md, int *w, int *h) { int pb = tx_big(1); menu_size_impl(md, w, h); tx_big(pb); }
+static void menu_size_impl(const MenuDef *md, int *w, int *h)
 {
     int mw = 60, hh = 4;
     for (int i = 0; i < md->n; i++) {
@@ -199,7 +201,9 @@ static int menu_enabled(const MItem *m)
     int en = 1, ck = 0; menu_state(m->id, &en, &ck);
     return en;
 }
-static void draw_popup(Img *fb, const MenuDef *md, int x, int y, int w, int h, int hot)
+static void draw_popup_impl(Img *fb, const MenuDef *md, int x, int y, int w, int h, int hot);
+static void draw_popup(Img *fb, const MenuDef *md, int x, int y, int w, int h, int hot) { int pb = tx_big(1); draw_popup_impl(fb, md, x, y, w, h, hot); tx_big(pb); }
+static void draw_popup_impl(Img *fb, const MenuDef *md, int x, int y, int w, int h, int hot)
 {
     gx_rect(fb, x, y, w, h, C_FACE); gx_raised(fb, x, y, w, h);
     int iy = y + 2;
@@ -252,7 +256,9 @@ static void menurun_layout(MenuRun *mr)
         mr->r1 = (Rc){ sx, iy - 2, sw, sh };
     }
 }
-static void menurun_paint(Modal *m, Img *fb)
+static void menurun_paint_impl(Modal *m, Img *fb);
+static void menurun_paint(Modal *m, Img *fb) { int pb = tx_big(1); menurun_paint_impl(m, fb); tx_big(pb); }
+static void menurun_paint_impl(Modal *m, Img *fb)
 {
     MenuRun *mr = (MenuRun *)m->ud;
     if (mr->bar_mode) {
@@ -380,7 +386,9 @@ static int menurun_event(Modal *m, const PEvent *ev)
     }
     return 0;
 }
-static void menu_bar_layout(MenuRun *mr)
+static void menu_bar_layout_impl(MenuRun *mr);
+static void menu_bar_layout(MenuRun *mr) { int pb = tx_big(1); menu_bar_layout_impl(mr); tx_big(pb); }
+static void menu_bar_layout_impl(MenuRun *mr)
 {
     int x = 2;
     for (int i = 0; i < mr->ntp; i++) { mr->bar_x[i] = x; mr->bar_w[i] = tx_width(mr->tp[i].title, 0, 1) + 16; x += mr->bar_w[i]; }
@@ -438,7 +446,9 @@ int popup_menu_run(const ResMenuItem *items, int x, int y, int *cmd_out)
 
 /* generic simple list popup (used for combo-like choices): returns index or -1 */
 typedef struct { Modal m; const char **items; int n, hot; Rc r; int sel; } ListPop;
-static void lp_paint(Modal *m, Img *fb)
+static void lp_paint_impl(Modal *m, Img *fb);
+static void lp_paint(Modal *m, Img *fb) { int pb = tx_big(1); lp_paint_impl(m, fb); tx_big(pb); }
+static void lp_paint_impl(Modal *m, Img *fb)
 {
     ListPop *lp = (ListPop *)m->ud;
     gx_rect(fb, lp->r.x, lp->r.y, lp->r.w, lp->r.h, C_WHITE); gx_frame(fb, lp->r.x, lp->r.y, lp->r.w, lp->r.h, C_BLACK);

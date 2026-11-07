@@ -10,7 +10,7 @@
 #include "imgio.h"
 #include "resdata.h"
 
-#define APP_VERSION "V1.16"
+#define APP_VERSION "V1.17"
 
 typedef struct { int x, y; } Pt;
 typedef struct { int x, y, w, h; } Rc;
@@ -50,7 +50,7 @@ typedef struct {
     int minw, minh;     /* size the box was drawn with; it grows beyond this to fit the text */
     char *text; TStyle *st; int len, cap, caret, sel;   /* sel = selection anchor, -1 none */
     char font[64]; int size, bold, italic, underline;
-    int frozen, from_obj; px_t fg, bg; int trans;   /* committed boxes keep their own colours; from_obj = re-opened for editing */
+    int frozen, from_obj; px_t fg, bg; int trans; int tscale;   /* tscale: text size multiplier (permille) fixed when the box is made */   /* committed boxes keep their own colours; from_obj = re-opened for editing */
 } TextBox;
 typedef struct { int n; TextBox *o; } TList;      /* finished text boxes: stay editable until something else changes the picture */
 
@@ -66,6 +66,7 @@ typedef struct {
     int grid_w, grid_h, tile_grid;
     char path[1024]; int dirty, bw;
     Sel sel; TextBox tb; TList tl, tundo[3], tredo[3];
+    Img *shadow;   /* picture area hidden by shrinking the canvas; comes back if the canvas is enlarged again */
     char status_help[256];
     char recent[4][1024]; int nrecent;
     Img *clip; /* internal clipboard */

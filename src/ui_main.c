@@ -247,7 +247,9 @@ static void draw_icon1(Img *fb, int x, int y, const uint32_t *ic)
 {
     for (int j = 0; j < 15; j++) for (int i = 0; i < 15; i++) if ((ic[j * 15 + i] & 0xffffff) == 0) img_put(fb, x + i, y + j, C_BLACK);
 }
-static void paint_status(Img *fb)
+static void paint_status_impl(Img *fb);
+static void paint_status(Img *fb) { int pb = tx_big(1); paint_status_impl(fb); tx_big(pb); }
+static void paint_status_impl(Img *fb)
 {
     if (!R_status.h) return;
     gx_rect(fb, R_status.x, R_status.y, R_status.w, R_status.h, C_FACE);
@@ -271,7 +273,9 @@ static const int size_list[] = { 8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 2
 static Rc tb_name_r(void) { return (Rc){ R_textbar.x + 6, R_textbar.y + 4, 160, 22 }; }
 static Rc tb_size_r(void) { return (Rc){ R_textbar.x + 172, R_textbar.y + 4, 48, 22 }; }
 static Rc tb_btn_r(int i) { return (Rc){ R_textbar.x + 228 + i * 24, R_textbar.y + 4, 23, 22 }; }
-static void paint_textbar(Img *fb)
+static void paint_textbar_impl(Img *fb);
+static void paint_textbar(Img *fb) { int pb = tx_big(1); paint_textbar_impl(fb); tx_big(pb); }
+static void paint_textbar_impl(Img *fb)
 {
     if (!R_textbar.h) return;
     gx_rect(fb, R_textbar.x, R_textbar.y, R_textbar.w, R_textbar.h, C_FACE);
@@ -412,19 +416,22 @@ void app_paint_all(Img *fb)
     /* menu bar */
     gx_rect(fb, 0, 0, fb->w, 19, C_FACE);
     gx_hline(fb, 0, fb->w - 1, 18, C_SHADOW); gx_hline(fb, 0, fb->w - 1, 17, C_FACE);
+    int pb_ = tx_big(1);
     for (int i = 0; i < g_menu_titles_n; i++) {
         if (i == hot_menu) gx_raised1(fb, g_tx[i], 1, g_tw[i], 17);
         tx_draw(fb, g_tx[i] + 8, 3, g_titles[i], C_BLACK, 0, 1);
     }
+    tx_big(pb_);
     paint_zoom_btns(fb);
     /* tooltip */
     if (hot_tool >= 0 && plat_ticks_ms() - hot_since > 600) {
         const char *s = str_res(tool_str[hot_tool]); const char *nl = strchr(s, '\n');
         if (nl) {
-            nl++; int w = tx_width(nl, 0, 0) + 8, x = tip_x + 12, y = tip_y + 18;
+            int pbt = tx_big(1); nl++; int w = tx_width(nl, 0, 0) + 8, x = tip_x + 12, y = tip_y + 18;
             if (x + w > fb->w) x = fb->w - w;
             gx_rect(fb, x, y, w, 17, RGB(255, 255, 225)); gx_frame(fb, x, y, w, 17, C_BLACK);
             tx_draw(fb, x + 4, y + 2, nl, C_BLACK, 0, 0);
+            tx_big(pbt);
         }
     }
 }
@@ -704,6 +711,8 @@ static int next_test_event(PEvent *ev)
         return 0;
     }
     if (!strcmp(cmd, "cmd")) { sscanf(line, "%*s %d", &a); cmd_exec(a); return 0; }
+    if (!strcmp(cmd, "canvas")) { int w, h; sscanf(line, "%*s %d %d", &w, &h); set_canvas_size(w, h); ui_relayout(); return 0; }
+    if (!strcmp(cmd, "zoom")) { sscanf(line, "%*s %d", &a); set_zoom(a, 0, 0); return 0; }
     if (!strcmp(cmd, "tool")) { sscanf(line, "%*s %d", &a); tool_select(a); ui_relayout(); return 0; }
     if (!strcmp(cmd, "fg")) { unsigned v; sscanf(line, "%*s %x", &v); A.fg = v; return 0; }
     if (!strcmp(cmd, "bg")) { unsigned v; sscanf(line, "%*s %x", &v); A.bg = v; return 0; }
