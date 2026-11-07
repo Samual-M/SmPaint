@@ -95,14 +95,15 @@ void menu_state(int id, int *en, int *ck)
 /* ---------------- toolbox geometry ---------------- */
 static Rc tool_rect(int i) { return (Rc){ R_toolbox.x + 2 + (i % 2) * 26, R_toolbox.y + 3 + (i / 2) * 26, 26, 26 }; }
 static Rc opts_rect(void) { return (Rc){ R_toolbox.x + 7, R_toolbox.y + 3 + 8 * 26 + 4, 42, 66 }; }
-static Rc crop_btn(void) { Rc o = opts_rect(); return (Rc){ o.x + 2, o.y + 8, o.w - 4, o.h - 16 }; }
+static Rc opts2_rect(void);
+static Rc crop_btn(void) { Rc o = opts2_rect(); return (Rc){ o.x + 2, o.y + 8, o.w - 4, o.h - 16 }; }
 static int has_shapew(int tool) { return tool == T_RECT || tool == T_ELLIPSE || tool == T_RRECT || tool == T_POLY; }
 static Rc opts2_rect(void) { Rc o = opts_rect(); return (Rc){ o.x, o.y + o.h + 4, o.w, o.h }; }
 static Rc opt2_item(int i) { Rc o = opts2_rect(); int ih = (o.h - 4) / 6; return (Rc){ o.x + 2, o.y + 2 + i * ih, o.w - 4, ih }; }
 static int opt_count(int tool)
 {
     switch (tool) {
-    case T_TEXT: return 2;
+    case T_SELECT: case T_FREESEL: case T_TEXT: return 2;
     case T_ERASER: case T_MAG: return 4;
     case T_BRUSH: return 12;
     case T_AIR: return 3;
@@ -120,7 +121,7 @@ static Rc opt_item(int tool, int i)
 static int *opt_ptr(int tool)
 {
     switch (tool) {
-    case T_TEXT: return &A.o_trans;
+    case T_SELECT: case T_FREESEL: case T_TEXT: return &A.o_trans;
     case T_ERASER: return &A.o_eraser; case T_MAG: return &A.o_mag; case T_BRUSH: return &A.o_brush; case T_AIR: return &A.o_air;
     case T_LINE: case T_CURVE: return &A.o_line;
     default: return &A.o_fill;
@@ -154,6 +155,8 @@ static void paint_options(Img *fb)
         }
     }
     if (A.tool == T_SELECT || A.tool == T_FREESEL) {
+        Rc o2 = opts2_rect(); if (o2.y + o2.h > R_toolbox.y + R_toolbox.h) goto icons;
+        gx_sunken1(fb, o2.x, o2.y, o2.w, o2.h); gx_rect(fb, o2.x + 1, o2.y + 1, o2.w - 2, o2.h - 2, C_FACE);
         Rc r = crop_btn(); int en = A.sel.active;
         gx_rect(fb, r.x, r.y, r.w, r.h, C_FACE); gx_raised(fb, r.x, r.y, r.w, r.h);
         px_t c = en ? C_BLACK : C_SHADOW;
@@ -161,17 +164,17 @@ static void paint_options(Img *fb)
         gx_rect(fb, cx - 8, cy - 4, 12, 2, c); gx_rect(fb, cx - 4, cy - 8, 2, 12, c);
         gx_rect(fb, cx - 4, cy + 4, 12, 2, c); gx_rect(fb, cx + 4, cy - 4, 2, 12, c);
         { int pb = tx_big(1); int tw = tx_width("Crop", 0, 0); if (en) tx_draw(fb, r.x + (r.w - tw) / 2, r.y + r.h - 20, "Crop", c, 0, 0); else tx_draw_dis(fb, r.x + (r.w - tw) / 2, r.y + r.h - 20, "Crop", 0); tx_big(pb); }
-        return;
     }
+    icons:;
     int n = opt_count(A.tool); if (!n) return;
     int cur = *opt_ptr(A.tool);
-    if (A.tool == T_TEXT) cur = A.o_trans;
+    if (A.tool == T_SELECT || A.tool == T_FREESEL || A.tool == T_TEXT) cur = A.o_trans;
     for (int i = 0; i < n; i++) {
         Rc r = opt_item(A.tool, i); int sel = (i == cur);
         if (sel) gx_rect(fb, r.x, r.y, r.w, r.h, C_NAVY);
         px_t fgc = sel ? C_WHITE : C_BLACK;
         switch (A.tool) {
-        case T_TEXT: {
+        case T_SELECT: case T_FREESEL: case T_TEXT: {
             /* icons 36x23: left = opaque, right = transparent */
             int ox = r.x + (r.w - 36) / 2, oy = r.y + (r.h - 23) / 2;
             if (sel) gx_rect(fb, r.x, r.y, r.w, r.h, C_NAVY); else gx_rect(fb, r.x, r.y, r.w, r.h, C_FACE);
