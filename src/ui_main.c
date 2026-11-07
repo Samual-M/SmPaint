@@ -284,7 +284,7 @@ static void paint_status_impl(Img *fb)
 
 /* ---------------- text bar ---------------- */
 static const char *font_list[] = { "Arial", "Times New Roman", "Courier New", "Sans", "Serif", "Monospace", "Liberation Sans", "Liberation Serif", "Liberation Mono", "DejaVu Sans", "DejaVu Serif", "DejaVu Sans Mono", "Comic Sans MS", "Verdana", "Tahoma", "Georgia" };
-static const int size_list[] = { 8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72 };
+static const int size_list[] = { 4, 6, 8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72 };
 static Rc tb_name_r(void) { return (Rc){ R_textbar.x + 6, R_textbar.y + 4, 160, 22 }; }
 static Rc tb_size_r(void) { return (Rc){ R_textbar.x + 172, R_textbar.y + 4, 48, 22 }; }
 static Rc tb_btn_r(int i) { return (Rc){ R_textbar.x + 228 + i * 24, R_textbar.y + 4, 23, 22 }; }
@@ -557,9 +557,9 @@ static void handle_mouse_down(const PEvent *ev)
         Rc n = tb_name_r(), s = tb_size_r();
         if (rc_in(&n, x, y)) { int r = list_popup(font_list, 16, n.x, n.y + n.h, n.w, 0); if (r >= 0) text_set_font(font_list[r]); }
         else if (rc_in(&s, x, y)) {
-            const char *names[16]; static char buf[16][8];
-            for (int i = 0; i < 16; i++) { snprintf(buf[i], 8, "%d", size_list[i]); names[i] = buf[i]; }
-            int r = list_popup(names, 16, s.x, s.y + s.h, s.w, 2); if (r >= 0) text_set_size(size_list[r]);
+            const char *names[18]; static char buf[18][8]; int cur = 4;
+            for (int i = 0; i < 18; i++) { snprintf(buf[i], 8, "%d", size_list[i]); names[i] = buf[i]; if (size_list[i] == A.tb.size) cur = i; }
+            int r = list_popup(names, 18, s.x, s.y + s.h, s.w, cur); if (r >= 0) text_set_size(size_list[r]);
         } else for (int i = 0; i < 3; i++) { Rc r = tb_btn_r(i); if (rc_in(&r, x, y)) text_toggle(i); }
         text_autogrow();
         return;
