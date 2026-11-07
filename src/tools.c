@@ -1313,7 +1313,7 @@ int cmd_exec(int id)
     switch (id) {            /* everything not listed here edits the picture, so finished text boxes are baked in first */
     case CMD_NEW: case CMD_OPEN: case CMD_SAVE: case CMD_SAVEAS: case CMD_UNDO: case CMD_REPEAT: case CMD_TOOLBOX: case CMD_COLORBOX:
     case CMD_STATUSBAR: case CMD_TEXTBAR: case CMD_ZOOM_NORMAL: case CMD_ZOOM_LARGE: case CMD_ZOOM_CUSTOM: case CMD_ZOOMIN: case CMD_GRID:
-    case CMD_THUMB: case CMD_VIEWBITMAP: case CMD_HELP: case CMD_ABOUT: case CMD_EXIT: case CMD_EDITCOLORS: case CMD_PAGESETUP: break;
+    case CMD_THUMB: case CMD_VIEWBITMAP: case CMD_HELP: case CMD_ABOUT: case CMD_EXIT: case CMD_EDITCOLORS: case CMD_PAGESETUP: case CMD_COPYIMG: break;
     default: app_bake_text();
     }
     switch (id) {
@@ -1330,6 +1330,15 @@ int cmd_exec(int id)
         if (!A.path[0]) return cmd_exec(CMD_SAVEAS);
         { int ow; Img *f = app_flat_image(&ow); int ok = save_image(A.path, f, -1); if (ow) img_free(f); if (ok) { A.dirty = 0; update_title(); } }
         break;
+    case CMD_COPYIMG: {
+        if (A.tb.active) text_commit();
+        sel_commit();
+        int ow; Img *f = app_flat_image(&ow);
+        plat_clip_set_image(f->p, f->w, f->h);
+        char msg[96]; snprintf(msg, sizeof msg, "Image copied to the clipboard (%dx%d)", f->w, f->h); set_status_help(msg);
+        if (ow) img_free(f);
+        break;
+    }
     case CMD_SAVEAS: {
         if (A.tb.active) text_commit();
         sel_commit();

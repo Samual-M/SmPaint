@@ -1,4 +1,4 @@
-# Building Paint (V1.15)
+# Building Paint (V1.16)
 
 The program is a portable C99 core (`src/`) plus one small platform layer per OS. Nothing is downloaded at run time,
 there is no telemetry, and the app works fully offline.
@@ -27,7 +27,7 @@ On a Mac with the Command Line Tools (`xcode-select --install`):
     sh packaging/macos/make_app.sh
 
 This builds one universal binary (arm64 + x86_64, minimum macOS 11), wraps it in `Paint.app`, applies an ad-hoc
-code signature (required for Apple Silicon to run it) and creates `dist/mspaintV1.15-mac.dmg`.
+code signature (required for Apple Silicon to run it) and creates `dist/mspaintV1.16-mac.dmg`.
 The app is not notarized (that needs a paid Apple developer account). On first launch macOS may say it can't verify the
 developer: right-click Paint.app > Open > Open, or run `xattr -dr com.apple.quarantine /Applications/Paint.app`.
 

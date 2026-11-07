@@ -389,6 +389,16 @@ static void ensure_menus(void)
 {
     if (menus_built) return;
     build_menu_from(res_menu_main, tops, &ntops, subs, &nsubs);
+    /* File > "Copy Image to Clipboard" right under Save As: whole picture to the clipboard, no file needed */
+    for (int t = 0; t < ntops; t++)
+        for (int i = 0; i < tops[t].n && tops[t].n < 27; i++)
+            if (tops[t].it[i].id == CMD_SAVEAS) {
+                MItem *m = &tops[t].it[i + 1];
+                memmove(m + 1, m, sizeof(MItem) * (size_t)(tops[t].n - i - 1));
+                memset(m, 0, sizeof *m); m->type = tops[t].it[i].type; m->id = CMD_COPYIMG; m->sub = -1;
+                strcpy(m->text, "Copy Image to Clipboard\tCtrl+Shift+C");
+                tops[t].n++; t = ntops; break;
+            }
     menus_built = 1;
 }
 int menu_bar_titles(char out[][32], int *xs, int *ws)

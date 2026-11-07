@@ -10,7 +10,7 @@
 #include "imgio.h"
 #include "resdata.h"
 
-#define APP_VERSION "V1.15"
+#define APP_VERSION "V1.16"
 
 typedef struct { int x, y; } Pt;
 typedef struct { int x, y, w, h; } Rc;
@@ -30,7 +30,7 @@ enum {
     CMD_ZOOM_NORMAL = 37670, CMD_ZOOM_LARGE = 37671, CMD_ZOOM_CUSTOM = 37672, CMD_VIEWBITMAP = 37673,
     CMD_THUMB = 37676, CMD_GRID = 37677, CMD_TEXTBAR = 37678, CMD_FLIPROT = 37680, CMD_STRETCH = 37681,
     CMD_INVERT = 37682, CMD_ATTR = 37683, CMD_CLEARIMG = 37684, CMD_OPAQUE = 6868, CMD_EDITCOLORS = 6869,
-    CMD_ZOOMIN = 6811, CMD_ZOOMOUT = 6810
+    CMD_ZOOMIN = 6811, CMD_ZOOMOUT = 6810, CMD_COPYIMG = 6870
 };
 
 /* ---- application state ---- */

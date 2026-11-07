@@ -473,7 +473,7 @@ static int accel_cmd(const PEvent *ev)
     if (ctrl) {
         switch (k) {
         case 'n': return shift ? CMD_CLEARIMG : CMD_NEW; case 'o': return CMD_OPEN; case 's': return CMD_SAVE; case 'p': return CMD_PRINT;
-        case 'z': return CMD_UNDO; case 'y': return CMD_REPEAT; case 'x': return CMD_CUT; case 'c': return CMD_COPY; case 'v': return CMD_PASTE;
+        case 'z': return CMD_UNDO; case 'y': return CMD_REPEAT; case 'x': return CMD_CUT; case 'c': return shift ? CMD_COPYIMG : CMD_COPY; case 'v': return CMD_PASTE;
         case 'a': return CMD_SELECTALL; case 't': return CMD_TOOLBOX; case 'l': return CMD_COLORBOX; case 'g': return CMD_GRID;
         case 'f': return CMD_VIEWBITMAP; case 'r': return CMD_FLIPROT; case 'w': return CMD_STRETCH; case 'i': return CMD_INVERT; case 'e': return CMD_ATTR;
         case KEY_PGUP: return CMD_ZOOM_NORMAL; case KEY_PGDN: return CMD_ZOOM_LARGE; case KEY_PLUS: return CMD_ZOOMIN; case KEY_MINUS: return CMD_ZOOMOUT;
