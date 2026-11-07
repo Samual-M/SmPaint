@@ -210,8 +210,8 @@ static int auto_tscale(void)
     if (s < 1.0) s = 1.0; if (s > 8.0) s = 8.0;
     return (int)(s * 1000.0 + 0.5);
 }
-/* size numbers are scaled so that the default "10" draws as an old-style 18.46pt (what V1.21 called "48"): factor 48/26 */
-static int pt_to_px(int pt) { int k = A.tb.tscale > 0 ? A.tb.tscale : 1000; int px = (int)(((long long)pt * 96 * k * 48 + 1872000) / 3744000); return px < 3 ? 3 : px; }
+/* the size labels are multiplied by 3.5 when drawing: label 10 draws as a 35pt font */
+static int pt_to_px(int pt) { int k = A.tb.tscale > 0 ? A.tb.tscale : 1000; int px = (int)(((long long)pt * 96 * k * 7 + 72000) / 144000); return px < 3 ? 3 : px; }
 static int text_px(void) { return pt_to_px(A.tb.size); }
 static TStyle cur_style(void)
 {
