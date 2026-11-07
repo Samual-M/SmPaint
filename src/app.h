@@ -10,7 +10,7 @@
 #include "imgio.h"
 #include "resdata.h"
 
-#define APP_VERSION "V1.21"
+#define APP_VERSION "V1.22"
 
 typedef struct { int x, y; } Pt;
 typedef struct { int x, y, w, h; } Rc;

@@ -210,8 +210,8 @@ static int auto_tscale(void)
     if (s < 1.0) s = 1.0; if (s > 8.0) s = 8.0;
     return (int)(s * 1000.0 + 0.5);
 }
-/* the size numbers are scaled down so that "26" draws as an old-style 10pt (factor 10/26) */
-static int pt_to_px(int pt) { int k = A.tb.tscale > 0 ? A.tb.tscale : 1000; int px = (int)(((long long)pt * 96 * k * 10 + 936000) / 1872000); return px < 3 ? 3 : px; }
+/* size numbers are scaled so that the default "10" draws as an old-style 18.46pt (what V1.21 called "48"): factor 48/26 */
+static int pt_to_px(int pt) { int k = A.tb.tscale > 0 ? A.tb.tscale : 1000; int px = (int)(((long long)pt * 96 * k * 48 + 1872000) / 3744000); return px < 3 ? 3 : px; }
 static int text_px(void) { return pt_to_px(A.tb.size); }
 static TStyle cur_style(void)
 {
