@@ -38,14 +38,17 @@ void view_center_on(int ix, int iy)
     A.sx = z_i2s(ix) + 3 - R_view.w / 2; A.sy = z_i2s(iy) + 3 - R_view.h / 2;
     view_clamp();
 }
+static void zoom_at(int pct, int sx, int sy);
+#define COLORBOX_H 267
 void ui_relayout(void)
 {
     int ww = A.fb->w, wh = A.fb->h, yb = wh;
     R_menubar = (Rc){ 0, 0, ww, 19 };
     if (A.show_status) { R_status = (Rc){ 0, wh - 22, ww, 22 }; yb -= 22; } else R_status = (Rc){ 0, wh, ww, 0 };
-    if (A.show_colorbox) { R_colorbox = (Rc){ 0, yb - 38, ww, 38 }; yb -= 38; } else R_colorbox = (Rc){ 0, yb, ww, 0 };
-    int wx = 0;
-    if (A.show_toolbox) { R_toolbox = (Rc){ 0, 19, 56, yb - 19 }; wx = 56; } else R_toolbox = (Rc){ 0, 19, 0, 0 };
+    /* left column: toolbox on top, the colour palette (rotated 90 degrees clockwise) underneath */
+    int wx = (A.show_toolbox || A.show_colorbox) ? 56 : 0, cb = A.show_colorbox ? COLORBOX_H : 0;
+    if (A.show_colorbox) R_colorbox = (Rc){ 0, yb - cb, 56, cb }; else R_colorbox = (Rc){ 0, yb, 0, 0 };
+    if (A.show_toolbox) R_toolbox = (Rc){ 0, 19, 56, yb - cb - 19 }; else R_toolbox = (Rc){ 0, 19, 0, 0 };
     int wy = 19;
     if (A.show_text && A.tool == T_TEXT) { R_textbar = (Rc){ wx, 19, ww - wx, 30 }; wy += 30; } else R_textbar = (Rc){ 0, 0, 0, 0 };
     R_work = (Rc){ wx, wy, ww - wx, yb - wy };
@@ -189,6 +192,20 @@ static void paint_options(Img *fb)
         }
     }
 }
+/* - / + zoom buttons at the right of the menu bar: each click changes the zoom by 5% */
+static Rc zoom_btn(int plus)
+{
+    int x0 = g_menu_titles_n ? g_tx[g_menu_titles_n - 1] + g_tw[g_menu_titles_n - 1] + 24 : 260;
+    return (Rc){ x0 + (plus ? 40 : 0), 2, 36, 15 };
+}
+static void paint_zoom_btns(Img *fb)
+{
+    for (int p = 0; p < 2; p++) {
+        Rc r = zoom_btn(p); gx_rect(fb, r.x, r.y, r.w, r.h, C_FACE); gx_raised(fb, r.x, r.y, r.w, r.h);
+        gx_rect(fb, r.x + r.w / 2 - 4, r.y + r.h / 2, 9, 1, C_BLACK);
+        if (p) gx_rect(fb, r.x + r.w / 2, r.y + r.h / 2 - 4, 1, 9, C_BLACK);
+    }
+}
 static void paint_toolbox(Img *fb)
 {
     if (!R_toolbox.w) return;
@@ -204,13 +221,13 @@ static void paint_toolbox(Img *fb)
 }
 
 /* ---------------- color box ---------------- */
-static Rc ind_rect(void) { return (Rc){ R_colorbox.x + 4, R_colorbox.y + 3, 31, 31 }; }
-static Rc pal_rect(int i) { return (Rc){ R_colorbox.x + 41 + (i % 14) * 16, R_colorbox.y + 3 + (i / 14) * 16, 16, 16 }; }
+static Rc ind_rect(void) { return (Rc){ R_colorbox.x + 12, R_colorbox.y + 5, 31, 31 }; }
+static Rc pal_rect(int i) { return (Rc){ R_colorbox.x + 12 + (1 - i / 14) * 16, R_colorbox.y + 42 + (i % 14) * 16, 16, 16 }; }
 static void paint_colorbox(Img *fb)
 {
     if (!R_colorbox.h) return;
     gx_rect(fb, R_colorbox.x, R_colorbox.y, R_colorbox.w, R_colorbox.h, C_FACE);
-    gx_hline(fb, 0, fb->w - 1, R_colorbox.y, C_HILITE);
+    gx_hline(fb, R_colorbox.x, R_colorbox.x + R_colorbox.w - 1, R_colorbox.y, C_HILITE);
     Rc ind = ind_rect();
     gx_sunken(fb, ind.x, ind.y, ind.w, ind.h); gx_rect(fb, ind.x + 2, ind.y + 2, ind.w - 4, ind.h - 4, C_FACE);
     gx_rect(fb, ind.x + 11, ind.y + 11, 16, 16, A.bg); gx_sunken1(fb, ind.x + 11, ind.y + 11, 16, 16);
@@ -397,6 +414,7 @@ void app_paint_all(Img *fb)
         if (i == hot_menu) gx_raised1(fb, g_tx[i], 1, g_tw[i], 17);
         tx_draw(fb, g_tx[i] + 8, 3, g_titles[i], C_BLACK, 0, 1);
     }
+    paint_zoom_btns(fb);
     /* tooltip */
     if (hot_tool >= 0 && plat_ticks_ms() - hot_since > 600) {
         const char *s = str_res(tool_str[hot_tool]); const char *nl = strchr(s, '\n');
@@ -475,6 +493,16 @@ static void handle_mouse_down(const PEvent *ev)
 {
     int x = ev->x, y = ev->y;
     if (rc_in(&R_menubar, x, y)) {
+        for (int p = 0; p < 2; p++) {
+            Rc r = zoom_btn(p);
+            if (rc_in(&r, x, y)) {
+                if (ev->button == BTN_LEFT) {
+                    int np = p ? (A.zp / 5 + 1) * 5 : ((A.zp - 1) / 5) * 5;
+                    zoom_at(np, R_view.x + R_view.w / 2, R_view.y + R_view.h / 2);
+                }
+                return;
+            }
+        }
         for (int i = 0; i < g_menu_titles_n; i++) if (x >= g_tx[i] && x < g_tx[i] + g_tw[i]) { open_menu(i); return; }
         return;
     }
@@ -704,8 +732,8 @@ static void live_hook(void)
 int main(int argc, char **argv)
 {
     memset(&A, 0, sizeof A);
-    if (plat_init(800, 600, 640, 480, "untitled - SmPaint")) return 1;
-    A.fb = img_new(800, 600, 0);
+    if (plat_init(1024, 768, 800, 660, "untitled - SmPaint")) return 1;
+    A.fb = img_new(1024, 768, 0);
     plat_set_live_hook(live_hook);
     app_init();
     g_menu_titles_n = menu_bar_titles(g_titles, g_tx, g_tw);

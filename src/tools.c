@@ -7,8 +7,8 @@ App A;
 extern int g_mx, g_my, g_min;   /* mouse position in image coords / over canvas (ui_main.c) */
 extern int g_quit;
 
-#define DEF_W 640
-#define DEF_H 480
+#define DEF_W 1920
+#define DEF_H 1080
 static int fdiv(int a, int b) { return a >= 0 ? a / b : -((-a + b - 1) / b); }
 static const int ERASER_SZ[4] = { 4, 6, 8, 10 };
 static const int BRUSH_SHAPE[12] = { 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3 };
@@ -75,7 +75,7 @@ void sel_cancel(void)
 void do_undo(void)
 {
     tool_cancel();
-    if (A.tb.active) { free(A.tb.text); free(A.tb.st); memset(&A.tb, 0, sizeof A.tb); strcpy(A.tb.font, "Arial"); A.tb.size = 10; A.tb.sel = -1; }
+    if (A.tb.active) { free(A.tb.text); free(A.tb.st); memset(&A.tb, 0, sizeof A.tb); strcpy(A.tb.font, "Arial"); A.tb.size = 14; A.tb.sel = -1; }
     if (A.sel.active) sel_cancel();
     if (!A.nundo) return;
     if (A.nredo == 3) { img_free(A.redo[0]); A.redo[0] = A.redo[1]; A.redo[1] = A.redo[2]; A.nredo = 2; }
@@ -563,7 +563,7 @@ void tool_press(int ix, int iy, int btn, int mods)
             }
             text_commit();
         }
-        if (!t->font[0]) { strcpy(t->font, "Arial"); t->size = 10; }
+        if (!t->font[0]) { strcpy(t->font, "Arial"); t->size = 14; }
         D.active = 1; D.mode = 3; break;
     }
     case T_SELECT: case T_FREESEL: {
@@ -921,7 +921,7 @@ void app_init(void)
     A.zp = 85; A.show_toolbox = A.show_colorbox = A.show_status = 1; A.show_text = 1;
     A.o_eraser = 2; A.o_brush = 5; A.o_air = 1; A.o_line = 0; A.o_shapew = 0; A.o_fill = 0; A.o_mag = 1; A.o_trans = 0;
     A.grid_w = A.grid_h = 8; A.dpi = 96;
-    strcpy(A.tb.font, "Arial"); A.tb.size = 10; A.tb.sel = -1;
+    strcpy(A.tb.font, "Arial"); A.tb.size = 14; A.tb.sel = -1;
     A.img = img_new(DEF_W, DEF_H, RGB(255, 255, 255));
 }
 int app_confirm_discard(void)
