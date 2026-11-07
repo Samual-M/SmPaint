@@ -1247,16 +1247,26 @@ static Img *load_image_file(const char *path)
     Img *im = (Img *)malloc(sizeof(Img)); im->w = w; im->h = h; im->p = px;
     return im;
 }
-/* show a just-opened image at its natural size (100%) and grow the window to fit it (maximised if it is larger than the screen) */
+/* show a just-opened image at the largest zoom (up to 100%) that fits the whole picture in the window, without scrollbars */
 void zoom_fit_image(void)
 {
-    extern Rc R_view, R_vscroll, R_hscroll;
+    extern Rc R_view, R_vscroll, R_hscroll, R_work;
     if (!A.img || !A.fb) return;
-    A.zp = 100; A.sx = A.sy = 0;
+    A.sx = A.sy = 0;
+    int zp = 100;
     ui_relayout();
-    int vw = R_view.w + (R_vscroll.w ? R_vscroll.w : 0), vh = R_view.h + (R_hscroll.h ? R_hscroll.h : 0);
-    int need_w = A.fb->w + (A.img->w + 11 - vw), need_h = A.fb->h + (A.img->h + 11 - vh);
-    plat_fit_window(need_w, need_h);
+    int aw = R_work.w - 4 - 6, ah = R_work.h - 4 - 6;
+    if (aw > 0 && ah > 0) {
+        int zw = (int)((long long)aw * 100 / A.img->w), zh = (int)((long long)ah * 100 / A.img->h);
+        zp = zw < zh ? zw : zh;
+    }
+    if (zp > 100) zp = 100;
+    for (; zp >= ZOOM_MIN; zp--) {                     /* step down until no scrollbar appears */
+        A.zp = zp; ui_relayout();
+        if (!R_hscroll.w && !R_vscroll.w) break;
+    }
+    if (zp < ZOOM_MIN) { A.zp = ZOOM_MIN; ui_relayout(); }
+    A.sx = A.sy = 0; view_clamp();
 }
 void app_load_file(const char *path)
 {
